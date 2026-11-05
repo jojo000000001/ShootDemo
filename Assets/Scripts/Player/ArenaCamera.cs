@@ -14,8 +14,10 @@ namespace ShootDemo.Player
         [SerializeField] private GameConfig config;
         [SerializeField] private Transform target;
         [SerializeField] private Transform boundsRoot;
+        [SerializeField] private float verticalLead = 1.25f;
 
         private Camera _camera;
+        private PlayerAim _aim;
         private Bounds _bounds;
         private bool _hasBounds;
         private Vector3 _focus;
@@ -50,6 +52,8 @@ namespace ShootDemo.Player
                     boundsRoot = walls.transform;
                 }
             }
+
+            CacheAim();
         }
 
         private void Start()
@@ -65,6 +69,7 @@ namespace ShootDemo.Player
             float follow = config != null ? config.camera.followLerp : 10f;
             float blend = follow <= 0f ? 0f : 1f - Mathf.Exp(-follow * deltaTime);
             Vector3 desired = TargetPlanarPosition();
+            desired.y += VerticalLead(ReadAimY(), verticalLead);
             Vector2 smoothed = Vector2.Lerp(new Vector2(_focus.x, _focus.y), new Vector2(desired.x, desired.y), blend);
             _focus = ClampFocus(new Vector3(smoothed.x, smoothed.y, _focus.z));
 
@@ -108,6 +113,11 @@ namespace ShootDemo.Player
                 _focus.x + (viewport.x - 0.5f) * halfWidth * 2f,
                 _focus.y + (viewport.y - 0.5f) * halfHeight * 2f,
                 0f);
+        }
+
+        public static float VerticalLead(float aimY, float lead)
+        {
+            return Mathf.Clamp(aimY, -1f, 1f) * Mathf.Max(0f, lead);
         }
 
         public static Vector2 ClampToBounds(Vector2 desired, Bounds bounds, float halfWidth, float halfHeight)
@@ -155,6 +165,21 @@ namespace ShootDemo.Player
             }
 
             return direction * (amplitude * damper * damper);
+        }
+
+        private void CacheAim()
+        {
+            _aim = target != null ? target.GetComponent<PlayerAim>() : null;
+        }
+
+        private float ReadAimY()
+        {
+            if (_aim == null)
+            {
+                CacheAim();
+            }
+
+            return _aim != null ? _aim.AimDirection.y : 0f;
         }
 
         private Vector3 TargetPlanarPosition()

@@ -29,6 +29,15 @@ namespace ShootDemo.Tests.EditMode
         }
 
         [Test]
+        public void VerticalLead_PutsThePlayerBelowCenterWhenAimingUp()
+        {
+            Assert.That(ArenaCamera.VerticalLead(1f, 1.25f), Is.EqualTo(1.25f).Within(0.001f));
+            Assert.That(ArenaCamera.VerticalLead(-1f, 1.25f), Is.EqualTo(-1.25f).Within(0.001f));
+            Assert.That(ArenaCamera.VerticalLead(0.5f, 1.25f), Is.EqualTo(0.625f).Within(0.001f));
+            Assert.That(ArenaCamera.VerticalLead(1f, -2f), Is.EqualTo(0f).Within(0.001f));
+        }
+
+        [Test]
         public void EvaluateShake_EndsAtZeroAndStaysWithinAmplitude()
         {
             const float amplitude = 0.2f;
