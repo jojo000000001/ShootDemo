@@ -46,15 +46,20 @@ namespace ShootDemo.Config
     [Serializable]
     public sealed class MovementSettings
     {
+        [Min(0f)] public float walkSpeed = 3f;
+        [Tooltip("Maximum speed while holding Shift.")]
         [Min(0f)] public float moveSpeed = 6f;
         [Min(0f)] public float accel = 36f;
         [Min(0f)] public float decel = 48f;
+        [Min(0f)] public float turnSpeed = 540f;
 
         internal void Validate()
         {
             moveSpeed = Mathf.Max(0f, moveSpeed);
+            walkSpeed = Mathf.Clamp(walkSpeed, 0f, moveSpeed);
             accel = Mathf.Max(0f, accel);
             decel = Mathf.Max(0f, decel);
+            turnSpeed = Mathf.Max(0f, turnSpeed);
         }
     }
 
