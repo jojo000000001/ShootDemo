@@ -66,6 +66,19 @@ namespace ShootDemo.Tests.EditMode
         }
 
         [Test]
+        public void TryChangeState_AllowsMenuToEnterAndLeavePlay()
+        {
+            Assert.That(stateMachine.TryChangeState(GameState.Menu), Is.True);
+            Assert.That(stateMachine.TryChangeState(GameState.Paused), Is.False);
+            Assert.That(stateMachine.CurrentState, Is.EqualTo(GameState.Menu));
+
+            Assert.That(stateMachine.TryChangeState(GameState.Playing), Is.True);
+            Assert.That(stateMachine.TryChangeState(GameState.GameOver), Is.True);
+            Assert.That(stateMachine.TryChangeState(GameState.Menu), Is.True);
+            Assert.That(stateMachine.CurrentState, Is.EqualTo(GameState.Menu));
+        }
+
+        [Test]
         public void GameConfig_ContainsPlannedStressTiers()
         {
             GameConfig config = ScriptableObject.CreateInstance<GameConfig>();

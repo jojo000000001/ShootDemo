@@ -87,6 +87,19 @@ namespace ShootDemo.Tests.EditMode
         }
 
         [Test]
+        public void Clear_SkipsInstancesThatWereAlreadyDestroyed()
+        {
+            PoolProbe alive = pool.Get();
+            PoolProbe destroyed = pool.Get();
+            Object.DestroyImmediate(destroyed.gameObject);
+
+            Assert.DoesNotThrow(() => pool.Clear());
+            Assert.That(alive == null, Is.True);
+            Assert.That(pool.ActiveCount, Is.Zero);
+            Assert.That(pool.InactiveCount, Is.Zero);
+        }
+
+        [Test]
         public void Release_ReturnsFalseForUnknownInstance()
         {
             var outsider = new GameObject("Outsider").AddComponent<PoolProbe>();

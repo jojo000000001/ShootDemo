@@ -72,14 +72,17 @@ namespace ShootDemo.Core
         {
             switch (from)
             {
+                case GameState.Menu:
+                    return to == GameState.Playing;
+
                 case GameState.Playing:
-                    return to == GameState.Paused || to == GameState.GameOver;
+                    return to == GameState.Paused || to == GameState.GameOver || to == GameState.Menu;
 
                 case GameState.Paused:
-                    return to == GameState.Playing || to == GameState.GameOver;
+                    return to == GameState.Playing || to == GameState.GameOver || to == GameState.Menu;
 
                 case GameState.GameOver:
-                    return to == GameState.Playing;
+                    return to == GameState.Playing || to == GameState.Menu;
 
                 default:
                     return false;

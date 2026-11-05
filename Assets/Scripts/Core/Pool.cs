@@ -115,12 +115,12 @@ namespace ShootDemo.Core
             {
                 foreach (T instance in _active)
                 {
-                    Object.DestroyImmediate(instance.gameObject);
+                    DestroyPooled(instance);
                 }
 
                 foreach (T instance in _inactive)
                 {
-                    Object.DestroyImmediate(instance.gameObject);
+                    DestroyPooled(instance);
                 }
 
                 if (_ownsRoot && _root != null)
@@ -131,6 +131,16 @@ namespace ShootDemo.Core
 
             _active.Clear();
             _inactive.Clear();
+        }
+
+        static void DestroyPooled(T instance)
+        {
+            if (instance == null)
+            {
+                return;
+            }
+
+            Object.DestroyImmediate(instance.gameObject);
         }
 
         T CreateInstance()
