@@ -27,6 +27,7 @@ namespace ShootDemo.Player
         private Transform muzzle;
         private Animator animator;
         private PlayerLocomotionAnimation locomotion;
+        private PlayerDash dash;
         private bool pendingShot;
         private Vector2 pendingDirection;
 
@@ -54,6 +55,7 @@ namespace ShootDemo.Player
             muzzle = FindActiveNamed(transform, muzzleName);
             animator = GetComponent<Animator>();
             locomotion = GetComponent<PlayerLocomotionAnimation>();
+            dash = GetComponent<PlayerDash>();
             pool = new Pool<Bullet>(bulletPrefab, prewarmCount);
         }
 
@@ -88,6 +90,11 @@ namespace ShootDemo.Player
             }
 
             pendingShot = false;
+            if (!CanFire())
+            {
+                return;
+            }
+
             Vector2 direction = BarrelDirection();
             Vector3 origin = muzzle != null ? muzzle.position : (Vector3)MuzzlePosition(transform.position, direction, config.shooting.muzzleOffset);
             Bullet bullet = pool.Get(new Vector3(origin.x, origin.y, 0f), Quaternion.identity);
@@ -98,6 +105,7 @@ namespace ShootDemo.Player
                 config.shooting.bulletSpeed,
                 config.shooting.bulletDamage,
                 config.shooting.bulletLifetime);
+            CombatEffects.Instance?.ShowMuzzle(origin, direction);
         }
 
         private Vector2 BarrelDirection()
@@ -177,6 +185,11 @@ namespace ShootDemo.Player
 
         private bool CanFire()
         {
+            if (dash != null && dash.IsDashing)
+            {
+                return false;
+            }
+
             GameStateMachine stateMachine = GameStateMachine.Instance;
             return stateMachine == null || stateMachine.CurrentState == GameState.Playing;
         }

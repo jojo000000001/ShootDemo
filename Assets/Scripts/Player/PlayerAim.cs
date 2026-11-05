@@ -15,6 +15,7 @@ namespace ShootDemo.Player
         [SerializeField] private int crosshairSortingOrder = 11000;
 
         private PlayerMovement movement;
+        private PlayerDash dash;
         private Rigidbody2D body;
         private Camera mainCamera;
         private ArenaCamera arenaCamera;
@@ -29,6 +30,7 @@ namespace ShootDemo.Player
         private void Awake()
         {
             movement = GetComponent<PlayerMovement>();
+            dash = GetComponent<PlayerDash>();
             body = GetComponent<Rigidbody2D>();
             AimPoint = transform.position;
             targetFacingAngle = body != null ? body.rotation : transform.eulerAngles.z;
@@ -41,6 +43,11 @@ namespace ShootDemo.Player
             {
                 movement.SetFacingEnabled(false);
             }
+        }
+
+        private void OnDisable()
+        {
+            SetCrosshairVisible(false);
         }
 
         private void OnDestroy()
@@ -76,6 +83,11 @@ namespace ShootDemo.Player
 
         private void FixedUpdate()
         {
+            if (!CanAim() || (dash != null && dash.IsDashing))
+            {
+                return;
+            }
+
             ApplyFacing(Time.fixedDeltaTime);
         }
 

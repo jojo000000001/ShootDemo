@@ -1,5 +1,8 @@
 using ShootDemo.Core;
 using UnityEngine;
+using UnityEngine.SceneManagement;
+using System.Collections.Generic;
+using ShootDemo.Config;
 
 namespace ShootDemo.Combat
 {
@@ -11,8 +14,10 @@ namespace ShootDemo.Combat
     {
         [SerializeField] private float radius = 0.06f;
         [SerializeField] private LayerMask hitMask = ~0;
+        [SerializeField] private GameConfig config;
 
-        private readonly RaycastHit2D[] hitBuffer = new RaycastHit2D[8];
+        private readonly List<RaycastHit2D> hitBuffer = new List<RaycastHit2D>(16);
+        private TrailRenderer trail;
         private Pool<Bullet> pool;
         private Transform owner;
         private Vector2 direction = Vector2.right;
@@ -22,6 +27,11 @@ namespace ShootDemo.Combat
 
         public float Damage { get; private set; }
         public Vector2 Direction => direction;
+
+        private void Awake()
+        {
+            trail = GetComponent<TrailRenderer>();
+        }
 
         public void Launch(
             Pool<Bullet> sourcePool,
@@ -42,10 +52,22 @@ namespace ShootDemo.Combat
                 0f,
                 0f,
                 Player.PlayerMovement.CalculateFacingAngle(Vector2.right, direction));
+            if (trail != null)
+            {
+                trail.time = config != null ? config.combatFeedback.trailLifetime : 0.08f;
+                trail.startWidth = config != null ? config.combatFeedback.trailWidth : 0.055f;
+                trail.Clear();
+                trail.emitting = true;
+            }
         }
 
         public void OnSpawned()
         {
+            if (trail != null)
+            {
+                trail.emitting = false;
+                trail.Clear();
+            }
             launched = false;
             lifetime = 0f;
             speed = 0f;
@@ -56,6 +78,11 @@ namespace ShootDemo.Combat
 
         public void OnDespawned()
         {
+            if (trail != null)
+            {
+                trail.emitting = false;
+                trail.Clear();
+            }
             launched = false;
             pool = null;
             owner = null;
@@ -63,12 +90,17 @@ namespace ShootDemo.Combat
 
         private void Update()
         {
-            if (!launched)
+            Tick(Time.deltaTime);
+        }
+
+        internal void Tick(float deltaTime)
+        {
+            var state = GameStateMachine.Instance;
+            if (!launched || deltaTime <= 0f || (state != null && state.CurrentState != GameState.Playing))
             {
                 return;
             }
 
-            float deltaTime = Time.deltaTime;
             lifetime -= deltaTime;
             if (lifetime <= 0f)
             {
@@ -84,6 +116,12 @@ namespace ShootDemo.Combat
                 transform.position = hit.centroid.sqrMagnitude > 0f
                     ? (Vector3)hit.centroid
                     : (Vector3)(position + direction * hit.distance);
+                var receiver = hit.collider.GetComponentInParent<IDamageable>();
+                if (receiver is IHitDamageable contextual)
+                    contextual.TryTakeDamage(new DamageInfo(Damage, hit.point, direction, owner));
+                else
+                    receiver?.TryTakeDamage(Damage);
+                CombatEffects.Instance?.ShowImpact(hit.point, hit.normal);
                 Release();
                 return;
             }
@@ -101,7 +139,11 @@ namespace ShootDemo.Combat
 
         private bool TryGetBlockingHit(Vector2 origin, Vector2 castDirection, float distance, out RaycastHit2D blockingHit)
         {
-            int count = Physics2D.CircleCastNonAlloc(origin, radius, castDirection, hitBuffer, distance, hitMask);
+            var filter = new ContactFilter2D();
+            filter.SetLayerMask(hitMask);
+            filter.useTriggers = false;
+            int count = gameObject.scene.GetPhysicsScene2D().CircleCast(
+                origin, radius, castDirection, distance, filter, hitBuffer);
             float nearest = float.MaxValue;
             blockingHit = default;
             bool found = false;

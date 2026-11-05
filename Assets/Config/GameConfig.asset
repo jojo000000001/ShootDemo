@@ -20,25 +20,54 @@ MonoBehaviour:
     turnSpeed: 540
   dash:
     dashDistance: 5
-    dashDuration: 0.18
+    dashDuration: 0.3
     dashCooldown: 0.8
     iFrameDuration: 0.2
+  playerHealth:
+    maxHealth: 100
+    hurtInvulnerability: 0.5
+    hurtFlashDuration: 0.12
+    blinkInterval: 0.08
+    blinkAlpha: 0.35
   shooting:
     fireRate: 6
     bulletSpeed: 18
     bulletDamage: 10
     bulletLifetime: 2
     muzzleOffset: 0.75
+  combatFeedback:
+    whiteFlashDuration: 0.08
+    knockbackSpeed: 4
+    knockbackDuration: 0.12
+    hitStopDuration: 0.04
+    damageNumberLifetime: 0.65
+    damageNumberRise: 1.2
+    trailLifetime: 0.08
+    trailWidth: 0.055
+    muzzleLifetime: 0.05
   enemy:
     meleeHp: 30
     meleeSpeed: 3.5
     meleeDamage: 10
     meleeWindup: 0.35
     meleeInterval: 1
+    meleeRange: 1.65
+    meleeHalfAngle: 65
+    meleeRecovery: 0.3
+    meleeTurnSpeed: 540
+    meleeRepathInterval: 0.5
     rangedHp: 20
     rangedKeepDistance: 7
     rangedWindup: 0.45
     rangedFireRate: 1.25
+    rangedSpeed: 2.8
+    rangedDistanceTolerance: 0.75
+    rangedMaxDistance: 12
+    rangedRecovery: 0.45
+    rangedDamage: 10
+    rangedProjectileSpeed: 10
+    rangedProjectileLifetime: 3
+    deathHoldDuration: 0.5
   spawn:
     spawnInterval: 0.5
     maxAlive: 100
@@ -49,15 +78,15 @@ MonoBehaviour:
         time: 0
         value: 1
         inSlope: 0
-        outSlope: 0
+        outSlope: 1
         tangentMode: 0
         weightedMode: 0
         inWeight: 0
         outWeight: 0
       - serializedVersion: 3
         time: 1
-        value: 1
-        inSlope: 0
+        value: 2
+        inSlope: 1
         outSlope: 0
         tangentMode: 0
         weightedMode: 0
@@ -67,6 +96,12 @@ MonoBehaviour:
       m_PostInfinity: 2
       m_RotationOrder: 4
     spawnRadius: 12
+    radiusVariation: 2
+    minPlayerDistance: 6
+    clearance: 0.15
+    initialDelay: 2
+    difficultyDuration: 120
+    positionAttempts: 16
   camera:
     followLerp: 10
     shakeAmplitude: 0.2

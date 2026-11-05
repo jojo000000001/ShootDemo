@@ -12,6 +12,7 @@ namespace ShootDemo.Player
         [SerializeField] private Vector2 localForward = Vector2.right;
 
         private Rigidbody2D body;
+        private PlayerDash dash;
         private Vector2 moveInput;
         private bool movementEnabled = true;
         private bool facingEnabled = true;
@@ -25,10 +26,12 @@ namespace ShootDemo.Player
         public float TurnSpeed => config == null ? 0f : config.movement.turnSpeed;
         public float WalkSpeed => config == null ? 0f : config.movement.walkSpeed;
         public bool IsRunning => isRunning;
+        public Vector2 Forward => transform.TransformDirection(localForward).normalized;
 
         private void Awake()
         {
             body = GetComponent<Rigidbody2D>();
+            dash = GetComponent<PlayerDash>();
 
             if (config == null)
             {
@@ -50,6 +53,12 @@ namespace ShootDemo.Player
 
         private void FixedUpdate()
         {
+            // Only one system writes translation during a physics step.
+            if (dash != null && dash.isActiveAndEnabled && dash.Tick(Time.fixedDeltaTime))
+            {
+                return;
+            }
+
             body.velocity = CalculateNextVelocity(
                 body.velocity,
                 moveInput,

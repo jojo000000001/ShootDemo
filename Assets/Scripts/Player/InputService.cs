@@ -11,6 +11,11 @@ namespace ShootDemo.Player
         private const string HorizontalAxis = "Horizontal";
         private const string VerticalAxis = "Vertical";
 
+        public static bool ReadDashPressed()
+        {
+            return Input.GetKeyDown(KeyCode.Space);
+        }
+
         public static bool ReadRunHeld()
         {
             return Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);

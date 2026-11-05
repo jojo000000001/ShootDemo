@@ -13,22 +13,36 @@ namespace ShootDemo.Player
         private static readonly int IdleState = Animator.StringToHash("Base Layer.neo2_idle");
         private static readonly int WalkState = Animator.StringToHash("Base Layer.neo2_walk");
         private static readonly int RunState = Animator.StringToHash("Base Layer.neo2_run");
+        private static readonly int AvoidState = Animator.StringToHash("Base Layer.neo2_avoid");
+        private static readonly int DashPlaybackSpeed = Animator.StringToHash("DashPlaybackSpeed");
 
         private PlayerMovement movement;
         private Animator animator;
         private int currentState;
         private float attackLock;
+        private PlayerDash dash;
+        private float avoidClipLength;
 
         private void Awake()
         {
             movement = GetComponent<PlayerMovement>();
             animator = GetComponent<Animator>();
+            dash = GetComponent<PlayerDash>();
             animator.applyRootMotion = false;
+            foreach (var clip in animator.runtimeAnimatorController.animationClips)
+            {
+                if (clip.name == "neo2_avoid")
+                {
+                    avoidClipLength = clip.length;
+                    break;
+                }
+            }
 
             if (!animator.HasState(0, IdleState) || !animator.HasState(0, WalkState)
-                || !animator.HasState(0, RunState))
+                || !animator.HasState(0, RunState)
+                || (dash != null && (!animator.HasState(0, AvoidState) || avoidClipLength <= 0f)))
             {
-                Debug.LogError("Player locomotion needs neo2_idle, neo2_walk and neo2_run states.", this);
+                Debug.LogError("Player locomotion needs idle, walk, run and (with PlayerDash) avoid states.", this);
                 enabled = false;
             }
         }
@@ -48,6 +62,19 @@ namespace ShootDemo.Player
 
         private void LateUpdate()
         {
+            if (dash != null && dash.IsDashing)
+            {
+                attackLock = 0f;
+                if (currentState != AvoidState)
+                {
+                    animator.SetFloat(DashPlaybackSpeed, avoidClipLength / dash.Duration);
+                    animator.CrossFadeInFixedTime(AvoidState, 0.03f, 0);
+                    currentState = AvoidState;
+                }
+
+                return;
+            }
+
             if (attackLock > 0f)
             {
                 attackLock -= Time.deltaTime;
