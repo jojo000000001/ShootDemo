@@ -1,0 +1,21 @@
+{
+  "name": "ShootDemo.EditModeTests",
+  "rootNamespace": "ShootDemo.Tests.EditMode",
+  "references": [
+    "ShootDemo.Runtime"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ]
+}
