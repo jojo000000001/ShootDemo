@@ -15,7 +15,8 @@ GameObject:
   - component: {fileID: 7060341552911849382}
   - component: {fileID: 5738406366617905369}
   - component: {fileID: 6892152410415815576}
-  m_Layer: 0
+  - component: {fileID: 5938783066549359529}
+  m_Layer: 8
   m_Name: bianyi_ganranzhe_sanjieduan
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -155,6 +156,19 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 03ca204f46136504ab2ce88339984353, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  config: {fileID: 11400000, guid: fc4586255b845ca4ba60dfc19be3c0ec, type: 2}
+--- !u!114 &5938783066549359529
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4605959698916076012}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e445355551c08564f8c6d90aaa8dff89, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   config: {fileID: 11400000, guid: fc4586255b845ca4ba60dfc19be3c0ec, type: 2}

@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using ShootDemo.Core;
 using ShootDemo.Player;
+using ShootDemo.Config;
+using Unity.Profiling;
 using UnityEngine;
 
 namespace ShootDemo.Enemy
@@ -10,6 +12,10 @@ namespace ShootDemo.Enemy
     [DefaultExecutionOrder(-200)]
     public sealed class EnemyRegistry : MonoBehaviour
     {
+        [SerializeField] private GameConfig config;
+        private static readonly ProfilerMarker GridMarker = new ProfilerMarker("Enemies.SpatialGrid.Update");
+        public SpatialGrid<EnemyLifecycle> Grid { get; private set; }
+        public EnemyAIScheduler Scheduler { get; private set; }
         private readonly HashSet<EnemyLifecycle> alive = new HashSet<EnemyLifecycle>();
         private readonly Dictionary<EnemyLifecycle, Pool<EnemyLifecycle>> pools = new Dictionary<EnemyLifecycle, Pool<EnemyLifecycle>>();
         public static EnemyRegistry Instance { get; private set; }
@@ -21,17 +27,34 @@ namespace ShootDemo.Enemy
         {
             if (Instance != null && Instance != this) { enabled = false; return; }
             Instance = this;
+            Grid = new SpatialGrid<EnemyLifecycle>(config != null ? config.crowd.cellSize : 2.5f);
+            Scheduler = GetComponent<EnemyAIScheduler>();
         }
 
         internal void Register(EnemyLifecycle enemy)
         {
             if (enemy != null && enemy.gameObject.scene == gameObject.scene && !enemy.Health.IsDead && alive.Add(enemy))
+            {
+                Grid?.Update(enemy, enemy.Position);
+                Scheduler?.Register(enemy);
                 AliveCountChanged?.Invoke(alive.Count);
+            }
         }
 
         internal void Unregister(EnemyLifecycle enemy)
         {
+            Grid?.Remove(enemy);
+            Scheduler?.Unregister(enemy);
             if (alive.Remove(enemy)) AliveCountChanged?.Invoke(alive.Count);
+        }
+
+        private void FixedUpdate() { SynchronizeGrid(); }
+
+        public void SynchronizeGrid()
+        {
+            if (Grid == null) return;
+            using (GridMarker.Auto())
+                foreach (var enemy in alive) Grid.Update(enemy, enemy.Position);
         }
 
         public EnemyLifecycle Spawn(EnemyLifecycle prefab, Vector2 position, Quaternion rotation, PlayerHealth target = null)
@@ -60,6 +83,7 @@ namespace ShootDemo.Enemy
             if (Instance != this) return;
             Instance = null;
             alive.Clear();
+            Grid?.Clear();
             foreach (var pool in pools.Values) pool.Clear();
             pools.Clear();
         }

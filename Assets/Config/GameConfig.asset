@@ -68,6 +68,16 @@ MonoBehaviour:
     rangedProjectileSpeed: 10
     rangedProjectileLifetime: 3
     deathHoldDuration: 0.5
+  crowd:
+    cellSize: 2.5
+    neighborRadius: 2
+    maxNeighbors: 24
+    maxCandidates: 128
+    separationStrength: 4
+    maxSeparationSpeed: 3.5
+    spacing: 0.88
+    obstacleLookAhead: 0.8
+    collisionSkin: 0.035
   spawn:
     spawnInterval: 0.5
     maxAlive: 100
@@ -109,6 +119,10 @@ MonoBehaviour:
   stress:
     stressTiers: 64000000f4010000e8030000
   performance:
+    aiSchedulingEnabled: 1
     aiTickInterval: 0.1
     farDistanceThreshold: 15
     farTickMultiplier: 3
+    lodHysteresis: 2
+    maxDecisionsPerFixedStep: 256
+    maxPathSearchesPerFixedStep: 8

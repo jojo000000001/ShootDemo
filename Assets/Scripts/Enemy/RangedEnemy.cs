@@ -11,8 +11,9 @@ namespace ShootDemo.Enemy
 
     [DisallowMultipleComponent]
     [RequireComponent(typeof(EnemyHealth), typeof(Rigidbody2D))]
+    [RequireComponent(typeof(EnemyAttackVisibility))]
     [DefaultExecutionOrder(-20)]
-    public sealed class RangedEnemy : MonoBehaviour
+    public sealed class RangedEnemy : MonoBehaviour, IEnemyBrain
     {
         // Saliva radius plus a margin keeps decisions stable at obstacle edges.
         private const float FiringClearance = 0.26f;
@@ -26,6 +27,7 @@ namespace ShootDemo.Enemy
         private EnemyHealth health;
         private EnemyHitFeedback feedback;
         private Animator animator;
+        private EnemyAttackVisibility attackVisibility;
         private EnemyPathfinder2D navigation;
         private PlayerHealth target;
         private float remaining;
@@ -36,11 +38,30 @@ namespace ShootDemo.Enemy
         private Vector2 attackDirection;
         private float warningLength;
         private int animationHash;
+        private bool scheduleManaged;
+        private bool decisionDue;
+        private bool directApproach;
+        private bool hasSight;
+        private Vector2 retreatDirection;
         public RangedEnemyState State { get; private set; }
         public PlayerHealth Target => target;
+        public bool IsAttacking => State == RangedEnemyState.Windup || State == RangedEnemyState.Firing;
         public int ShotsFired { get; private set; }
         public bool IsWarningVisible => warning != null && warning.enabled;
         private Vector2 MuzzlePosition => muzzle != null ? (Vector2)muzzle.position : body.position + attackDirection * 0.8f;
+
+        public void SetDecisionSchedule(bool managed, bool due)
+        {
+            scheduleManaged = managed;
+            decisionDue = due;
+        }
+
+        private bool ReservePathSearch()
+        {
+            var registry = EnemyRegistry.Instance;
+            return registry == null || registry.gameObject.scene != gameObject.scene
+                || registry.Scheduler == null || registry.Scheduler.TryReservePathSearch(this);
+        }
 
         private void Awake()
         {
@@ -48,6 +69,7 @@ namespace ShootDemo.Enemy
             health = GetComponent<EnemyHealth>();
             feedback = GetComponent<EnemyHitFeedback>();
             animator = GetComponentInChildren<Animator>();
+            attackVisibility = GetComponent<EnemyAttackVisibility>();
             navigation = new EnemyPathfinder2D(gameObject.scene, navigationRadius, obstacleMask);
             if (config == null)
             {
@@ -64,15 +86,21 @@ namespace ShootDemo.Enemy
             ShotsFired = 0;
             released = false;
             path.Clear();
+            directApproach = hasSight = scheduleManaged = decisionDue = false;
+            retreatDirection = Vector2.zero;
             HideWarning();
         }
 
         public void SetTarget(PlayerHealth value)
         {
+            if (IsAttacking) Interrupt();
             target = value;
             path.Clear();
+            directApproach = hasSight = false;
+            retreatDirection = Vector2.zero;
+            State = RangedEnemyState.Idle;
             repathRemaining = 0f;
-            if (State == RangedEnemyState.Windup || State == RangedEnemyState.Firing) Interrupt();
+            HideWarning();
         }
 
         private void FixedUpdate() { Tick(Time.fixedDeltaTime); }
@@ -84,11 +112,14 @@ namespace ShootDemo.Enemy
             var game = GameStateMachine.Instance;
             if (game != null && game.CurrentState != GameState.Playing) { Stop(); return; }
             cooldown = Mathf.Max(0f, cooldown - deltaTime);
+            repathRemaining -= deltaTime;
+            bool think = !scheduleManaged || decisionDue;
+            decisionDue = false;
             if (feedback != null && feedback.IsKnockedBack) return;
             if (target == null || !target.isActiveAndEnabled || target.IsDead)
             {
                 acquireRemaining -= deltaTime;
-                if (acquireRemaining <= 0f)
+                if (acquireRemaining <= 0f && think)
                 {
                     acquireRemaining = 1f;
                     foreach (var player in FindObjectsOfType<PlayerHealth>())
@@ -103,6 +134,8 @@ namespace ShootDemo.Enemy
                 Play("idle");
                 return;
             }
+
+            if (attackVisibility != null && !attackVisibility.CanAttack) CancelUnreleasedAttack();
 
             var settings = config.enemy;
             Vector2 delta = (Vector2)target.transform.position - body.position;
@@ -144,35 +177,26 @@ namespace ShootDemo.Enemy
             float distance = delta.magnitude;
             // Finding a firing lane takes priority over keeping distance. Otherwise routing
             // toward a corner and retreating from the player undo each other every fixed step.
-            bool sight = navigation.SegmentClear(body.position, target.transform.position, FiringClearance);
-            if (!sight)
+            if (think) DecideMovement(delta, distance, deltaTime);
+            if (State == RangedEnemyState.Approaching)
             {
-                State = RangedEnemyState.Approaching;
-                Approach(target.transform.position, deltaTime);
+                Approach(target.transform.position, deltaTime, think);
                 return;
             }
-            float retreatUntil = State == RangedEnemyState.Retreating
-                ? settings.rangedKeepDistance
-                : settings.rangedKeepDistance - settings.rangedDistanceTolerance;
-            if (distance < retreatUntil
-                && TryRetreat(-delta, deltaTime))
+            if (State == RangedEnemyState.Retreating)
             {
-                State = RangedEnemyState.Retreating;
-                return;
-            }
-            float approachUntil = State == RangedEnemyState.Approaching
-                ? settings.rangedKeepDistance
-                : settings.rangedKeepDistance + settings.rangedDistanceTolerance;
-            if (distance > approachUntil)
-            {
-                State = RangedEnemyState.Approaching;
-                Approach(target.transform.position, deltaTime);
+                // Reapply raw intent each step; crowd steering must never feed back into the AI direction.
+                body.velocity = retreatDirection * settings.rangedSpeed;
+                Face(delta, deltaTime);
+                Play("walk");
                 return;
             }
             Stop();
             Face(delta, deltaTime);
-            if (distance <= settings.rangedMaxDistance && cooldown <= 0f
-                && Vector2.Angle(transform.right, delta) <= 12f)
+            if ((attackVisibility == null || attackVisibility.CanAttack)
+                && hasSight && distance <= settings.rangedMaxDistance && cooldown <= 0f
+                && Vector2.Angle(transform.right, delta) <= 12f
+                && navigation.SegmentClear(body.position, target.transform.position, FiringClearance))
             {
                 State = RangedEnemyState.Windup;
                 remaining = settings.rangedWindup;
@@ -182,6 +206,20 @@ namespace ShootDemo.Enemy
                 DrawWarning();
             }
             else { State = RangedEnemyState.Idle; Play("idle"); }
+        }
+
+        private void DecideMovement(Vector2 delta, float distance, float deltaTime)
+        {
+            var settings = config.enemy;
+            hasSight = navigation.SegmentClear(body.position, target.transform.position, FiringClearance);
+            if (!hasSight) { State = RangedEnemyState.Approaching; return; }
+            float retreatUntil = State == RangedEnemyState.Retreating
+                ? settings.rangedKeepDistance : settings.rangedKeepDistance - settings.rangedDistanceTolerance;
+            if (distance < retreatUntil && TryRetreat(-delta, deltaTime))
+            { State = RangedEnemyState.Retreating; return; }
+            float approachUntil = State == RangedEnemyState.Approaching
+                ? settings.rangedKeepDistance : settings.rangedKeepDistance + settings.rangedDistanceTolerance;
+            State = distance > approachUntil ? RangedEnemyState.Approaching : RangedEnemyState.Idle;
         }
 
         private bool TryRetreat(Vector2 away, float deltaTime)
@@ -202,26 +240,28 @@ namespace ShootDemo.Enemy
                 direction = candidate;
             }
             if (direction == Vector2.zero) return false;
-            body.velocity = direction * config.enemy.rangedSpeed;
-            Face((Vector2)target.transform.position - body.position, deltaTime);
-            Play("walk");
+            retreatDirection = direction;
             return true;
         }
 
-        private void Approach(Vector2 destination, float deltaTime)
+        private void Approach(Vector2 destination, float deltaTime, bool think)
         {
-            repathRemaining -= deltaTime;
-            if (navigation.SegmentClear(body.position, destination)) { path.Clear(); path.Add(destination); }
-            else if (repathRemaining <= 0f)
+            if (think)
             {
-                navigation.FindPath(body.position, destination,
-                    Mathf.Max(1f, config.enemy.rangedKeepDistance - config.enemy.rangedDistanceTolerance), path,
-                    FiringClearance);
-                repathRemaining = config.enemy.meleeRepathInterval;
+                directApproach = navigation.SegmentClear(body.position, destination);
+                if (directApproach) path.Clear();
+                else if (repathRemaining <= 0f && ReservePathSearch())
+                {
+                    navigation.FindPath(body.position, destination,
+                        Mathf.Max(1f, config.enemy.rangedKeepDistance - config.enemy.rangedDistanceTolerance), path,
+                        FiringClearance);
+                    repathRemaining = config.enemy.meleeRepathInterval;
+                }
+                for (int i = path.Count - 1; i > 0; i--)
+                    if (navigation.SegmentClear(body.position, path[i])) { path.RemoveRange(0, i); break; }
             }
+            if (directApproach) { path.Clear(); path.Add(destination); }
             while (path.Count > 0 && Vector2.Distance(body.position, path[0]) < 0.15f) path.RemoveAt(0);
-            for (int i = path.Count - 1; i > 0; i--)
-                if (navigation.SegmentClear(body.position, path[i])) { path.RemoveRange(0, i); break; }
             if (path.Count == 0) { Stop(); Play("idle"); return; }
             Vector2 move = path[0] - body.position;
             Face(move, deltaTime);
@@ -249,6 +289,11 @@ namespace ShootDemo.Enemy
         private void HideWarning() { if (warning != null) warning.enabled = false; }
         private void Stop() { if (body != null) body.velocity = Vector2.zero; }
 
+        internal void CancelUnreleasedAttack()
+        {
+            if (State == RangedEnemyState.Windup || (State == RangedEnemyState.Firing && !released)) Interrupt();
+        }
+
         private void OnDamaged(DamageInfo hit)
         {
             if (health.IsDead)
@@ -267,6 +312,8 @@ namespace ShootDemo.Enemy
             remaining = 0f;
             cooldown = Mathf.Max(cooldown, config.enemy.rangedRecovery);
             path.Clear();
+            directApproach = hasSight = false;
+            retreatDirection = Vector2.zero;
             repathRemaining = 0f;
             HideWarning();
             Play("idle");

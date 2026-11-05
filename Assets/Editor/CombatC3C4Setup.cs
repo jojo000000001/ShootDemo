@@ -36,6 +36,7 @@ namespace ShootDemo.Editor
             var service = GameObject.Find("EnemyCombat");
             if (service == null) service = new GameObject("EnemyCombat");
             if (service.GetComponent<EnemyRegistry>() == null) service.AddComponent<EnemyRegistry>();
+            AIC8Setup.Configure(service, config);
             var shots = service.GetComponent<EnemyProjectiles>();
             if (shots == null) shots = service.AddComponent<EnemyProjectiles>();
             SetObject(shots, "config", config);
@@ -57,6 +58,10 @@ namespace ShootDemo.Editor
                 if (ai == null) ai = root.AddComponent<RangedEnemy>();
                 SetObject(ai, "config", config);
                 var animator = root.GetComponentInChildren<Animator>();
+                var visibility = root.GetComponent<EnemyAttackVisibility>();
+                if (visibility == null) visibility = root.AddComponent<EnemyAttackVisibility>();
+                SetObject(visibility, "bodyRenderer", animator.GetComponentsInChildren<SpriteRenderer>(true)
+                    .First(sprite => sprite.name == "outuzhe_body"));
                 if (animator.GetComponent<EnemyAnimationEvents>() == null) animator.gameObject.AddComponent<EnemyAnimationEvents>();
                 SetObject(ai, "muzzle", animator.GetComponentsInChildren<Transform>(true).First(t => t.name == "outuzhe_mouth_3"));
                 var line = root.transform.Find("AttackWarning");
@@ -89,6 +94,7 @@ namespace ShootDemo.Editor
             var lifecycle = root.GetComponent<EnemyLifecycle>();
             if (lifecycle == null) lifecycle = root.AddComponent<EnemyLifecycle>();
             SetObject(lifecycle, "config", config);
+            CrowdC6C7Setup.Configure(root, config);
         }
 
         private static void BuildProjectile()

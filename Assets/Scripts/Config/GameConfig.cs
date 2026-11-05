@@ -24,6 +24,9 @@ namespace ShootDemo.Config
         [Header("Enemies")]
         public EnemySettings enemy = new EnemySettings();
 
+        [Header("Enemy Crowd")]
+        public CrowdSettings crowd = new CrowdSettings();
+
         [Header("Spawning")]
         public SpawnSettings spawn = new SpawnSettings();
 
@@ -44,6 +47,7 @@ namespace ShootDemo.Config
             shooting.Validate();
             combatFeedback.Validate();
             enemy.Validate();
+            crowd.Validate();
             spawn.Validate();
             camera.Validate();
             stress.Validate();
@@ -207,6 +211,33 @@ namespace ShootDemo.Config
     }
 
     [Serializable]
+    public sealed class CrowdSettings
+    {
+        [Min(0.5f)] public float cellSize = 2.5f;
+        [Min(0.1f)] public float neighborRadius = 2f;
+        [Range(1, 64)] public int maxNeighbors = 24;
+        [Range(16, 512)] public int maxCandidates = 128;
+        [Min(0f)] public float separationStrength = 4f;
+        [Min(0f)] public float maxSeparationSpeed = 3.5f;
+        [Range(0.5f, 1.2f)] public float spacing = 0.88f;
+        [Min(0f)] public float obstacleLookAhead = 0.8f;
+        [Min(0.001f)] public float collisionSkin = 0.035f;
+
+        internal void Validate()
+        {
+            cellSize = Mathf.Max(0.5f, cellSize);
+            neighborRadius = Mathf.Max(0.1f, neighborRadius);
+            maxNeighbors = Mathf.Clamp(maxNeighbors, 1, 64);
+            maxCandidates = Mathf.Clamp(maxCandidates, 16, 512);
+            separationStrength = Mathf.Max(0f, separationStrength);
+            maxSeparationSpeed = Mathf.Max(0f, maxSeparationSpeed);
+            spacing = Mathf.Clamp(spacing, 0.5f, 1.2f);
+            obstacleLookAhead = Mathf.Max(0f, obstacleLookAhead);
+            collisionSkin = Mathf.Max(0.001f, collisionSkin);
+        }
+    }
+
+    [Serializable]
     public sealed class SpawnSettings
     {
         [Min(0.01f)] public float spawnInterval = 0.5f;
@@ -277,15 +308,22 @@ namespace ShootDemo.Config
     [Serializable]
     public sealed class PerformanceSettings
     {
+        public bool aiSchedulingEnabled = true;
         [Min(0.01f)] public float aiTickInterval = 0.1f;
         [Min(0f)] public float farDistanceThreshold = 15f;
         [Min(1f)] public float farTickMultiplier = 3f;
+        [Min(0f)] public float lodHysteresis = 2f;
+        [Min(1)] public int maxDecisionsPerFixedStep = 256;
+        [Min(1)] public int maxPathSearchesPerFixedStep = 8;
 
         internal void Validate()
         {
             aiTickInterval = Mathf.Max(0.01f, aiTickInterval);
             farDistanceThreshold = Mathf.Max(0f, farDistanceThreshold);
             farTickMultiplier = Mathf.Max(1f, farTickMultiplier);
+            lodHysteresis = Mathf.Clamp(lodHysteresis, 0f, farDistanceThreshold);
+            maxDecisionsPerFixedStep = Mathf.Max(1, maxDecisionsPerFixedStep);
+            maxPathSearchesPerFixedStep = Mathf.Max(1, maxPathSearchesPerFixedStep);
         }
     }
 }

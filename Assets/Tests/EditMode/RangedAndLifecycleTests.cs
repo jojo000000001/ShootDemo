@@ -25,6 +25,7 @@ namespace ShootDemo.Tests.EditMode
         private PlayerHealth player;
         private Rigidbody2D body;
         private float savedTimeScale;
+        private Sprite testSprite;
 
         [SetUp]
         public void SetUp()
@@ -92,6 +93,8 @@ namespace ShootDemo.Tests.EditMode
             Invoke(registry, "OnDestroy");
             EditorSceneManager.ClosePreviewScene(scene);
             Object.DestroyImmediate(config);
+            if (testSprite != null) Object.DestroyImmediate(testSprite);
+            testSprite = null;
             Time.timeScale = savedTimeScale;
         }
 
@@ -127,6 +130,133 @@ namespace ShootDemo.Tests.EditMode
             var state = Create("State", Vector2.zero).AddComponent<GameStateMachine>();
             Invoke(state, "Awake");
             return state;
+        }
+
+        private EnemyAttackVisibility Presentation(out Camera camera, out SpriteRenderer sprite)
+        {
+            var visual = new GameObject("outuzhe_body");
+            visual.transform.SetParent(enemy.transform, false);
+            sprite = visual.AddComponent<SpriteRenderer>();
+            testSprite = Sprite.Create(Texture2D.whiteTexture, new Rect(0, 0, 1, 1), Vector2.one * 0.5f, 1f);
+            sprite.sprite = testSprite;
+            camera = Create("GameplayCamera", Vector2.zero).AddComponent<Camera>();
+            camera.transform.position = new Vector3(0f, 0f, -10f);
+            camera.orthographic = true;
+            camera.orthographicSize = 5f;
+            camera.aspect = 1f;
+            var gate = enemy.GetComponent<EnemyAttackVisibility>();
+            SetObject(gate, "bodyRenderer", sprite);
+            SetObject(gate, "viewCamera", camera);
+            Invoke(gate, "Awake");
+            Invoke(gate, "OnEnable");
+            return gate;
+        }
+
+        private void ArmVisibility(EnemyAttackVisibility gate)
+        {
+            for (int frame = 0; frame < 12; frame++) Invoke(gate, "TickVisibility", 0.02f, frame);
+            Assert.IsTrue(gate.CanAttack);
+        }
+
+        [Test]
+        public void CameraRapidlyApproachingOffscreenEnemyRequiresBodyVisibleBeforeWarning()
+        {
+            var gate = Presentation(out var camera, out _);
+            // Player and the future warning endpoint are inside the picture; the enemy body is outside.
+            camera.transform.position = new Vector3(7f, 0f, -10f);
+            for (int frame = 0; frame < 30; frame++)
+            {
+                Invoke(gate, "TickVisibility", 0.02f, frame);
+                Tick(0.02f);
+                Assert.IsFalse(enemy.IsWarningVisible);
+                Assert.AreEqual(0, enemy.ShotsFired);
+            }
+            camera.transform.position = new Vector3(0f, 0f, -10f);
+            Invoke(gate, "TickVisibility", 0.5f, 30);
+            Tick(0.02f);
+            Assert.IsFalse(gate.CanAttack, "Time spent outside the picture must not arm an attack.");
+            Assert.IsFalse(enemy.IsWarningVisible);
+            for (int frame = 31; frame < 40; frame++)
+            {
+                Invoke(gate, "TickVisibility", 0.02f, frame);
+                Tick(0.02f);
+                Assert.IsFalse(enemy.IsWarningVisible);
+            }
+            Invoke(gate, "TickVisibility", 0.02f, 40);
+            Invoke(gate, "TickVisibility", 0.02f, 41);
+            Tick(0.02f);
+            Assert.AreEqual(RangedEnemyState.Windup, enemy.State);
+            Assert.IsTrue(enemy.IsWarningVisible);
+            Tick(config.enemy.rangedWindup * 0.8f);
+            Assert.AreEqual(RangedEnemyState.Windup, enemy.State, "Newly visible enemies still give the complete windup.");
+        }
+
+        [Test]
+        public void LeavingGameplayCameraCancelsWarningEvenWithoutAnotherAiDecision()
+        {
+            var gate = Presentation(out var camera, out _);
+            ArmVisibility(gate);
+            Tick(0.02f);
+            Assert.IsTrue(enemy.IsWarningVisible);
+            enemy.SetDecisionSchedule(true, false);
+            camera.transform.position = new Vector3(7f, 0f, -10f);
+            Invoke(gate, "TickVisibility", 0.02f, 12);
+            Assert.IsFalse(enemy.IsWarningVisible);
+            Assert.IsFalse(enemy.IsAttacking);
+            Assert.AreEqual(0, enemy.ShotsFired);
+        }
+
+        [TestCase("disabled")]
+        [TestCase("transparent")]
+        [TestCase("layer")]
+        [TestCase("forceHidden")]
+        [TestCase("cameraDisabled")]
+        public void HiddenBodyCannotBeArmedByVisibleWarningRenderer(string reason)
+        {
+            var gate = Presentation(out var camera, out var sprite);
+            ArmVisibility(gate);
+            Tick(0.02f);
+            Assert.IsTrue(enemy.IsWarningVisible);
+            if (reason == "disabled") sprite.enabled = false;
+            if (reason == "transparent") sprite.color = Color.clear;
+            if (reason == "layer") camera.cullingMask = 0;
+            if (reason == "forceHidden") sprite.forceRenderingOff = true;
+            if (reason == "cameraDisabled") camera.enabled = false;
+            Assert.IsFalse(gate.CanAttack);
+            Tick(0.02f);
+            Assert.IsFalse(enemy.IsWarningVisible);
+            Assert.IsFalse(enemy.IsAttacking);
+        }
+
+        [Test]
+        public void VisibilityNeedsDistinctFramesAndPoolReuseResetsGracePeriod()
+        {
+            var gate = Presentation(out _, out _);
+            for (int i = 0; i < 100; i++) Invoke(gate, "TickVisibility", 1f, 0);
+            Assert.IsFalse(gate.CanAttack, "Multiple fixed steps before a rendered frame cannot arm attacks.");
+            for (int i = 1; i < 12; i++) Invoke(gate, "TickVisibility", 0.02f, i);
+            Assert.IsTrue(gate.CanAttack);
+            Invoke(gate, "OnDisable");
+            Invoke(gate, "OnEnable");
+            Assert.IsFalse(gate.CanAttack);
+        }
+
+        [Test]
+        public void PauseDoesNotCountTowardVisibilityGraceOrCancelAnArmedAttack()
+        {
+            var gate = Presentation(out _, out _);
+            var state = StateMachine();
+            Invoke(gate, "TickVisibility", 0.02f, 0);
+            state.TryChangeState(GameState.Paused);
+            for (int frame = 1; frame < 100; frame++) Invoke(gate, "TickVisibility", 1f, frame);
+            Assert.IsFalse(gate.CanAttack);
+            state.TryChangeState(GameState.Playing);
+            for (int frame = 100; frame < 111; frame++) Invoke(gate, "TickVisibility", 0.02f, frame);
+            Tick(0.02f);
+            Assert.IsTrue(enemy.IsWarningVisible);
+            state.TryChangeState(GameState.Paused);
+            Invoke(gate, "TickVisibility", 1f, 111);
+            Assert.AreEqual(RangedEnemyState.Windup, enemy.State);
         }
 
         [Test]
@@ -181,10 +311,12 @@ namespace ShootDemo.Tests.EditMode
             Assert.AreEqual(RangedEnemyState.Approaching, enemy.State, "Finish approaching before stopping to attack.");
         }
 
-        [TestCase(1f, -2f, 8f, 3f)]
-        [TestCase(2.5f, 0f, 4f, 7f)]
+        [TestCase(1f, -2f, 8f, 3f, false)]
+        [TestCase(2.5f, 0f, 4f, 7f, false)]
+        [TestCase(1f, -2f, 8f, 3f, true)]
+        [TestCase(2.5f, 0f, 4f, 7f, true)]
         public void RoutingAroundObstacleDoesNotOscillateBetweenApproachingAndRetreating(
-            float wallX, float wallY, float wallHeight, float playerX)
+            float wallX, float wallY, float wallHeight, float playerX, bool scheduled)
         {
             player.transform.position = Vector2.right * playerX;
             Wall(new Vector2(wallX, wallY), new Vector2(0.3f, wallHeight));
@@ -193,6 +325,7 @@ namespace ShootDemo.Tests.EditMode
             int windups = 0;
             for (int i = 0; i < 600; i++)
             {
+                if (scheduled) enemy.SetDecisionSchedule(true, i % 5 == 0);
                 Tick(0.02f);
                 scene.GetPhysicsScene2D().Simulate(0.02f);
                 if ((previous == RangedEnemyState.Approaching && enemy.State == RangedEnemyState.Retreating)

@@ -19,12 +19,23 @@ namespace ShootDemo.Enemy
         private bool dying;
         private float remaining;
         public EnemyHealth Health { get; private set; }
+        public IEnemyBrain Brain { get; private set; }
+        public EnemyCrowdMovement Crowd { get; private set; }
+        private Rigidbody2D body;
+        public Vector2 Position => body != null ? body.position : (Vector2)transform.position;
+        public float Radius { get; private set; } = 0.65f;
 
         private void Awake()
         {
             Health = GetComponent<EnemyHealth>();
+            body = GetComponent<Rigidbody2D>();
+            var capsule = GetComponent<CapsuleCollider2D>();
+            if (capsule != null) Radius = Mathf.Max(capsule.size.x * Mathf.Abs(transform.lossyScale.x),
+                capsule.size.y * Mathf.Abs(transform.lossyScale.y)) * 0.5f;
             melee = GetComponent<MeleeEnemy>();
             ranged = GetComponent<RangedEnemy>();
+            Brain = melee != null ? (IEnemyBrain)melee : ranged;
+            Crowd = GetComponent<EnemyCrowdMovement>();
             useMelee = melee != null && melee.enabled;
             useRanged = ranged != null && ranged.enabled;
         }

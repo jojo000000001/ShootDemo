@@ -9682,6 +9682,7 @@ GameObject:
   - component: {fileID: 506749305}
   - component: {fileID: 506749304}
   - component: {fileID: 506749307}
+  - component: {fileID: 506749308}
   m_Layer: 0
   m_Name: EnemyCombat
   m_TagString: Untagged
@@ -9716,6 +9717,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a88a2a3bfeab9d24892cbb9b21913161, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  config: {fileID: 11400000, guid: fc4586255b845ca4ba60dfc19be3c0ec, type: 2}
 --- !u!4 &506749306
 Transform:
   m_ObjectHideFlags: 0
@@ -9760,6 +9762,19 @@ MonoBehaviour:
     y: -32.9
     width: 79
     height: 65.8
+--- !u!114 &506749308
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 506749303}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 68d637fa461ff02418ab2e94602a87f4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  config: {fileID: 11400000, guid: fc4586255b845ca4ba60dfc19be3c0ec, type: 2}
 --- !u!1 &511073977
 GameObject:
   m_ObjectHideFlags: 0

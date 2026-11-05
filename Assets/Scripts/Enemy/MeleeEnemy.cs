@@ -12,7 +12,7 @@ namespace ShootDemo.Enemy
     [DisallowMultipleComponent]
     [RequireComponent(typeof(Rigidbody2D), typeof(EnemyHealth))]
     [DefaultExecutionOrder(-20)] // Knockback feedback has the final say over body velocity.
-    public sealed class MeleeEnemy : MonoBehaviour
+    public sealed class MeleeEnemy : MonoBehaviour, IEnemyBrain
     {
         [SerializeField] private GameConfig config;
         [SerializeField] private string animationPrefix = "jiangshi";
@@ -32,8 +32,25 @@ namespace ShootDemo.Enemy
         private Vector2 pathTarget;
         private Vector2 attackDirection;
         private int animationHash;
+        private bool scheduleManaged;
+        private bool decisionDue;
+        private bool directChase;
         public MeleeEnemyState State { get; private set; }
         public PlayerHealth Target => target;
+        public bool IsAttacking => State == MeleeEnemyState.Windup || State == MeleeEnemyState.Recovery;
+
+        public void SetDecisionSchedule(bool managed, bool due)
+        {
+            scheduleManaged = managed;
+            decisionDue = due;
+        }
+
+        private bool ReservePathSearch()
+        {
+            var registry = EnemyRegistry.Instance;
+            return registry == null || registry.gameObject.scene != gameObject.scene
+                || registry.Scheduler == null || registry.Scheduler.TryReservePathSearch(this);
+        }
 
         private void Awake()
         {
@@ -55,12 +72,14 @@ namespace ShootDemo.Enemy
             State = MeleeEnemyState.Idle;
             remaining = cooldown = repathRemaining = acquireRemaining = 0f;
             path.Clear();
+            directChase = scheduleManaged = decisionDue = false;
         }
 
         public void SetTarget(PlayerHealth value)
         {
             target = value;
             path.Clear();
+            directChase = false;
             repathRemaining = 0f;
             if (State == MeleeEnemyState.Windup) Interrupt();
         }
@@ -74,11 +93,14 @@ namespace ShootDemo.Enemy
             var game = GameStateMachine.Instance;
             if (game != null && game.CurrentState != GameState.Playing) { Stop(); return; }
             cooldown = Mathf.Max(0f, cooldown - deltaTime);
+            repathRemaining -= deltaTime;
+            bool think = !scheduleManaged || decisionDue;
+            decisionDue = false;
             if (feedback != null && feedback.IsKnockedBack) return;
             if (target == null || !target.isActiveAndEnabled)
             {
                 acquireRemaining -= deltaTime;
-                if (acquireRemaining <= 0f)
+                if (acquireRemaining <= 0f && think)
                 {
                     acquireRemaining = 1f;
                     foreach (var player in FindObjectsOfType<PlayerHealth>())
@@ -138,23 +160,27 @@ namespace ShootDemo.Enemy
 
             State = MeleeEnemyState.Chasing;
             Vector2 destination = target.transform.position;
-            repathRemaining -= deltaTime;
-            if (navigation.SegmentClear(body.position, destination))
+            if (think)
+            {
+                directChase = navigation.SegmentClear(body.position, destination);
+                if (directChase) path.Clear();
+                else if (repathRemaining <= 0f && (path.Count == 0 || Vector2.Distance(pathTarget, destination) > 0.75f
+                    || !navigation.SegmentClear(body.position, path[0])) && ReservePathSearch())
+                {
+                    navigation.FindPath(body.position, destination, settings.meleeRange * 0.85f, path);
+                    pathTarget = destination;
+                    repathRemaining = settings.meleeRepathInterval;
+                }
+                // Shortcut checks belong to the decision phase; waypoint execution stays continuous.
+                for (int i = path.Count - 1; i > 0; i--)
+                    if (navigation.SegmentClear(body.position, path[i])) { path.RemoveRange(0, i); break; }
+            }
+            if (directChase)
             {
                 path.Clear();
                 path.Add(destination);
             }
-            else if (repathRemaining <= 0f && (path.Count == 0 || Vector2.Distance(pathTarget, destination) > 0.75f
-                || !navigation.SegmentClear(body.position, path[0])))
-            {
-                navigation.FindPath(body.position, destination, settings.meleeRange * 0.85f, path);
-                pathTarget = destination;
-                repathRemaining = settings.meleeRepathInterval;
-            }
             while (path.Count > 0 && Vector2.Distance(body.position, path[0]) < 0.15f) path.RemoveAt(0);
-            // Skip corners only when the full body fits through the shortcut.
-            for (int i = path.Count - 1; i > 0; i--)
-                if (navigation.SegmentClear(body.position, path[i])) { path.RemoveRange(0, i); break; }
             if (path.Count == 0) { Stop(); Play("idle"); return; }
             Vector2 move = path[0] - body.position;
             Face(move, deltaTime);
@@ -190,6 +216,7 @@ namespace ShootDemo.Enemy
             remaining = 0f;
             cooldown = Mathf.Max(cooldown, config.enemy.meleeRecovery);
             path.Clear();
+            directChase = false;
             repathRemaining = 0f;
             Play("idle");
         }
