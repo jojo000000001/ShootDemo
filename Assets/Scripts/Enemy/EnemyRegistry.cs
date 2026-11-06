@@ -22,6 +22,7 @@ namespace ShootDemo.Enemy
         public int AliveCount => alive.Count;
         public IReadOnlyCollection<EnemyLifecycle> Alive => alive;
         public event Action<int> AliveCountChanged;
+        public event Action EnemyDefeated;
 
         private void Awake()
         {
@@ -45,7 +46,12 @@ namespace ShootDemo.Enemy
         {
             Grid?.Remove(enemy);
             Scheduler?.Unregister(enemy);
-            if (alive.Remove(enemy)) AliveCountChanged?.Invoke(alive.Count);
+            if (alive.Remove(enemy))
+            {
+                if (enemy != null && enemy.Health != null && enemy.Health.IsDead)
+                    EnemyDefeated?.Invoke();
+                AliveCountChanged?.Invoke(alive.Count);
+            }
         }
 
         private void FixedUpdate() { SynchronizeGrid(); }

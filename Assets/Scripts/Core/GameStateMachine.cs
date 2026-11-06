@@ -11,7 +11,20 @@ namespace ShootDemo.Core
 
         [SerializeField] private GameState initialState = GameState.Playing;
 
+        private static GameState? queuedInitialState;
+
         public static GameStateMachine Instance { get; private set; }
+
+        public static void ReloadInto(GameState state)
+        {
+            queuedInitialState = state;
+            if (Application.isPlaying)
+            {
+                Time.timeScale = 1f;
+                UnityEngine.SceneManagement.Scene active = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+                UnityEngine.SceneManagement.SceneManager.LoadScene(active.name);
+            }
+        }
 
         public GameState CurrentState { get; private set; }
 
@@ -27,6 +40,12 @@ namespace ShootDemo.Core
             }
 
             Instance = this;
+            if (queuedInitialState.HasValue)
+            {
+                initialState = queuedInitialState.Value;
+                queuedInitialState = null;
+            }
+
             CurrentState = initialState;
             ApplyTimeScale(CurrentState);
         }
@@ -96,7 +115,7 @@ namespace ShootDemo.Core
                 return;
             }
 
-            Time.timeScale = state == GameState.Paused ? PausedTimeScale : RunningTimeScale;
+            Time.timeScale = state == GameState.Playing ? RunningTimeScale : PausedTimeScale;
         }
     }
 }

@@ -28,6 +28,7 @@ namespace ShootDemo.Player
         // Damage receivers in B6 must reject damage while this is true.
         public bool IsInvulnerable => isActiveAndEnabled && IsDashing && elapsed < invincibleDuration;
         public float CooldownRemaining { get; private set; }
+        public float CooldownDuration => config != null ? Mathf.Max(0f, config.dash.dashCooldown) : 0f;
         public bool CanDash => isActiveAndEnabled && config != null && !IsDashing
             && CooldownRemaining <= 0f && CanAct();
         public Vector2 DashDirection { get; private set; }
@@ -35,6 +36,16 @@ namespace ShootDemo.Player
         public event Action DashStarted;
         public event Action DashEnded;
         public event Action DashAnimationCue;
+        public event Action<float, float> CooldownChanged;
+        private int reportedCooldown = -1;
+
+        private void ReportCooldown()
+        {
+            int value = Mathf.CeilToInt(CooldownRemaining * 10f);
+            if (value == reportedCooldown) return;
+            reportedCooldown = value;
+            CooldownChanged?.Invoke(CooldownRemaining, config != null ? config.dash.dashCooldown : 0f);
+        }
 
         // neo2_avoid contains this cue for sound/effect synchronization.
         public void Event_Trigger()
@@ -87,6 +98,7 @@ namespace ShootDemo.Player
             distance = Mathf.Max(0f, config.dash.dashDistance);
             invincibleDuration = Mathf.Clamp(config.dash.iFrameDuration, 0f, duration);
             CooldownRemaining = Mathf.Max(0f, config.dash.dashCooldown);
+            ReportCooldown();
             elapsed = 0f;
             blocked = false;
             body.velocity = Vector2.zero;
@@ -106,6 +118,7 @@ namespace ShootDemo.Player
 
             deltaTime = Mathf.Max(0f, deltaTime);
             CooldownRemaining = Mathf.Max(0f, CooldownRemaining - deltaTime);
+            ReportCooldown();
             if (!IsDashing)
             {
                 return false;

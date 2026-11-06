@@ -84,7 +84,7 @@ namespace ShootDemo.Core
         {
             if (!IsActive) return;
             remaining = 0f;
-            Time.timeScale = stateMachine != null && stateMachine.CurrentState == GameState.Paused
+            Time.timeScale = stateMachine != null && stateMachine.CurrentState != GameState.Playing
                 ? 0f : resumeScale;
         }
 

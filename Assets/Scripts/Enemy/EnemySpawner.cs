@@ -34,6 +34,9 @@ namespace ShootDemo.Enemy
         public float ElapsedSeconds { get; private set; }
         public int TotalSpawned { get; private set; }
         public int FailedAttempts { get; private set; }
+        // Zero keeps the spawner unlimited for stress tests; match rules set a cumulative wave budget.
+        public int SpawnLimit { get; set; }
+        public bool HasFinishedSpawning => SpawnLimit > 0 && TotalSpawned >= SpawnLimit;
         public event Action<EnemyLifecycle> Spawned;
         public float CurrentInterval => EvaluateInterval(config != null ? config.spawn : null, ElapsedSeconds);
 
@@ -68,7 +71,7 @@ namespace ShootDemo.Enemy
 
         internal void Tick(float deltaTime)
         {
-            if (config == null || deltaTime <= 0f) return;
+            if (config == null || deltaTime <= 0f || HasFinishedSpawning) return;
             var game = GameStateMachine.Instance;
             if (game != null && game.CurrentState != GameState.Playing) return;
             if (registry == null || !registry.isActiveAndEnabled) return;
@@ -96,7 +99,7 @@ namespace ShootDemo.Enemy
         {
             spawned = null;
             var game = GameStateMachine.Instance;
-            if (!isActiveAndEnabled || config == null || registry == null || player == null || player.IsDead
+            if (HasFinishedSpawning || !isActiveAndEnabled || config == null || registry == null || player == null || player.IsDead
                 || !player.isActiveAndEnabled || registry.AliveCount >= config.spawn.maxAlive
                 || (game != null && game.CurrentState != GameState.Playing)) return false;
             var prefab = SelectPrefab();
