@@ -57,6 +57,12 @@ namespace ShootDemo.Editor
                 for (int i = 8; i < 32; i++)
                 {
                     if (!string.IsNullOrEmpty(layers.GetArrayElementAtIndex(i).stringValue)) continue;
+                    // Unnamed slots may already be assigned to scene obstacles.
+                    // Naming such a slot Enemy would silently disable their collisions.
+                    bool occupied = false;
+                    foreach (var collider in Object.FindObjectsOfType<Collider2D>(true))
+                        if (collider.gameObject.layer == i) { occupied = true; break; }
+                    if (occupied) continue;
                     layers.GetArrayElementAtIndex(i).stringValue = "Enemy";
                     tags.ApplyModifiedPropertiesWithoutUndo();
                     layer = i;

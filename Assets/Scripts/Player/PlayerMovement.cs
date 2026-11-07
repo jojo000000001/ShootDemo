@@ -17,6 +17,25 @@ namespace ShootDemo.Player
         private bool movementEnabled = true;
         private bool facingEnabled = true;
         private bool isRunning;
+        private GameStateMachine state;
+
+        private void Start()
+        {
+            state = GameStateMachine.Instance;
+            if (state != null) state.StateChanged += OnStateChanged;
+        }
+
+        private void OnStateChanged(GameState previous, GameState next)
+        {
+            moveInput = Vector2.zero;
+            isRunning = false;
+            if (body != null) body.velocity = Vector2.zero;
+        }
+
+        private void OnDestroy()
+        {
+            if (state != null) state.StateChanged -= OnStateChanged;
+        }
 
         public Vector2 MoveInput => moveInput;
         public Vector2 CurrentVelocity => body == null ? Vector2.zero : body.velocity;

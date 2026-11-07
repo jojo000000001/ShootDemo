@@ -33,6 +33,8 @@ namespace ShootDemo.Enemy
         private float obstacleDistance;
         private float probeLength;
         private float wallSide;
+        private float entranceForwardLimit = float.PositiveInfinity;
+        private Vector2 entranceForwardAxis;
         public int LastNeighborCount { get; private set; }
         public int LastCandidateChecks { get; private set; }
 
@@ -65,6 +67,7 @@ namespace ShootDemo.Enemy
             desiredSeparation = Vector2.zero;
             obstacleCached = scheduleManaged = decisionDue = false;
             wallSide = 0f;
+            entranceForwardLimit = float.PositiveInfinity;
             LastNeighborCount = LastCandidateChecks = 0;
         }
 
@@ -81,9 +84,33 @@ namespace ShootDemo.Enemy
                 || (ranged != null && ranged.enabled
                     && (ranged.State == RangedEnemyState.Windup || ranged.State == RangedEnemyState.Firing));
             Vector2 intent = body.velocity;
+            bool entering = (melee != null && melee.UsingPassageEntrance) || (ranged != null && ranged.UsingPassageEntrance);
             bool think = !scheduleManaged || decisionDue;
             decisionDue = false;
             LastNeighborCount = LastCandidateChecks = 0;
+            if (!knockedBack && entering)
+            {
+                // Entrance guidance does not reserve space: retain the bounded neighbor
+                // separation used elsewhere, or every actor converges on the same point.
+                if (think)
+                {
+                    desiredSeparation = CalculateSeparation(true);
+                    entranceForwardLimit = EntranceSpeedLimit(intent);
+                }
+                separation = Vector2.MoveTowards(separation, desiredSeparation, 10f * deltaTime);
+                Vector2 spacing = EnemyNarrowPassage.ConstrainEntranceSeparation(gameObject.scene, body.position, separation);
+                // Do not force minimum forward motion into a crowded doorway or add wall
+                // steering that pulls the actor away from the authored entrance route.
+                Vector2 combined = intent + spacing;
+                Vector2 forward = entranceForwardAxis;
+                float progress = Vector2.Dot(combined, forward);
+                if (progress > entranceForwardLimit) combined -= forward * (progress - entranceForwardLimit);
+                body.velocity = ConstrainVelocity(Vector2.ClampMagnitude(combined,
+                    Mathf.Max(intent.magnitude, config.crowd.maxSeparationSpeed)), deltaTime);
+                ResolveEntranceOverlap(deltaTime);
+                return;
+            }
+            entranceForwardLimit = float.PositiveInfinity;
             if (!knockedBack && !attacking)
             {
                 if (think) desiredSeparation = CalculateSeparation();
@@ -107,7 +134,14 @@ namespace ShootDemo.Enemy
                     if (progress < minimum) combined += forward * (minimum - progress);
                     combined = Vector2.ClampMagnitude(combined, intent.magnitude);
                 }
-                intent = AvoidObstacle(combined, deltaTime, think);
+                // A* already selected a side of the obstacle. Local wall steering must
+                // not reverse that route at a corner and send the agent back and forth.
+                if (melee != null && melee.FollowingPath)
+                {
+                    obstacleCached = false;
+                    intent = combined;
+                }
+                else intent = AvoidObstacle(combined, deltaTime, think);
             }
             else
             {
@@ -120,7 +154,7 @@ namespace ShootDemo.Enemy
             body.velocity = ConstrainVelocity(intent, deltaTime);
         }
 
-        private Vector2 CalculateSeparation()
+        private Vector2 CalculateSeparation(bool entranceFlow = false)
         {
             LastNeighborCount = LastCandidateChecks = 0;
             var registry = EnemyRegistry.Instance;
@@ -139,12 +173,84 @@ namespace ShootDemo.Enemy
                 var other = neighbors[i];
                 if (other == null || other.Health.IsDead || !other.isActiveAndEnabled
                     || !grid.TryGetPosition(other, out Vector2 otherPosition)) continue;
+                if (entranceFlow && HasClearedEntrance(other)) continue;
                 float desiredDistance = (lifecycle.Radius + other.Radius) * settings.spacing;
                 force += PairSeparation(position - otherPosition, desiredDistance,
                     lifecycle.GetInstanceID(), other.GetInstanceID());
                 LastNeighborCount++;
             }
             return Vector2.ClampMagnitude(force * settings.separationStrength, settings.maxSeparationSpeed);
+        }
+
+        private bool HasClearedEntrance(EnemyLifecycle other)
+        {
+            var target = melee != null ? melee.Target : ranged != null ? ranged.Target : null;
+            return target != null && other.Brain != null
+                && EnemyNarrowPassage.HasClearedEntrance(gameObject.scene, other.Position, target.transform.position);
+        }
+
+        private float EntranceSpeedLimit(Vector2 intent)
+        {
+            entranceForwardAxis = intent.normalized;
+            if (intent.sqrMagnitude < 0.0001f) return float.PositiveInfinity;
+            var target = melee != null ? melee.Target : ranged != null ? ranged.Target : null;
+            Vector2 outside = body.position, entrance = body.position;
+            bool passage = target != null && EnemyNarrowPassage.TryGetEntranceRoute(gameObject.scene, target.transform.position,
+                out outside, out entrance);
+            // Initialize for callers without an authored passage (including isolated crowd tests).
+            if (!passage) outside = entrance = body.position;
+            else entranceForwardAxis = (entrance - outside).normalized;
+            // Merge traffic follows the passage axis. Using each actor's diagonal
+            // direction makes two side-by-side actors consider each other the leader.
+            Vector2 forward = entranceForwardAxis;
+            Vector2 side = new Vector2(-forward.y, forward.x);
+            if (passage && Mathf.Abs(Vector2.Dot(body.position - outside, side)) > 0.4f)
+                return float.PositiveInfinity;
+            float limit = float.PositiveInfinity;
+            foreach (var other in neighbors)
+            {
+                if (other == null || other.Health.IsDead || !other.isActiveAndEnabled) continue;
+                if (HasClearedEntrance(other)) continue;
+                if (passage && Mathf.Abs(Vector2.Dot(other.Position - outside, side)) > 0.4f) continue;
+                Vector2 delta = other.Position - body.position;
+                float ahead = Vector2.Dot(delta, forward);
+                if (ahead <= 0.001f) continue;
+                float desired = (lifecycle.Radius + other.Radius) * config.crowd.spacing;
+                float sideSquared = Mathf.Max(0f, delta.sqrMagnitude - ahead * ahead);
+                if (sideSquared >= desired * desired) continue;
+                float gap = ahead - Mathf.Sqrt(desired * desired - sideSquared);
+                var otherBody = other.GetComponent<Rigidbody2D>();
+                float leaderSpeed = otherBody != null ? Mathf.Max(0f, Vector2.Dot(otherBody.velocity, forward)) : 0f;
+                limit = Mathf.Min(limit, Mathf.Max(0f, leaderSpeed + gap / 0.2f));
+            }
+            return limit;
+        }
+
+        private void ResolveEntranceOverlap(float deltaTime)
+        {
+            // Summed repulsion cancels in the middle of a dense line. Resolve the
+            // deepest actual overlap as well, using only the already bounded query.
+            // Sweep each correction against walls instead of enabling enemy physics pairs.
+            for (int pass = 0; pass < 2; pass++)
+            {
+                float deepest = 0.04f;
+                Vector2 correction = Vector2.zero;
+                foreach (var other in neighbors)
+                {
+                    if (other == null || other.Health.IsDead || !other.isActiveAndEnabled) continue;
+                    if (HasClearedEntrance(other)) continue;
+                    Vector2 delta = body.position - other.Position;
+                    float distance = delta.magnitude;
+                    float penetration = (lifecycle.Radius + other.Radius) * config.crowd.spacing - distance;
+                    if (penetration <= deepest) continue;
+                    deepest = penetration;
+                    Vector2 direction = distance > 0.0001f ? delta / distance
+                        : PairSeparation(delta, 1f, lifecycle.GetInstanceID(), other.GetInstanceID());
+                    correction = direction * Mathf.Min(penetration * 0.5f, 0.1f);
+                }
+                if (correction.sqrMagnitude < 0.000001f) break;
+                body.position += ConstrainVelocity(correction / deltaTime, deltaTime) * deltaTime;
+            }
         }
 
         internal static Vector2 PairSeparation(Vector2 delta, float desiredDistance, int self, int other)
@@ -204,7 +310,16 @@ namespace ShootDemo.Enemy
             float distance = speed * deltaTime;
             if (!TryBlockingHit(direction, distance + config.crowd.collisionSkin, out var hit)) return velocity;
             float safe = Mathf.Max(0f, hit.distance - config.crowd.collisionSkin);
-            return direction * Mathf.Min(speed, safe / deltaTime);
+            Vector2 forward = direction * Mathf.Min(speed, safe / deltaTime);
+            // Keep the tangential component when a diagonal step touches a wall.
+            // Scaling the entire vector to zero also removed all motion along the wall.
+            Vector2 slide = velocity - hit.normal * Mathf.Min(0f, Vector2.Dot(velocity, hit.normal));
+            float slideSpeed = slide.magnitude;
+            if (slideSpeed < 0.0001f) return forward;
+            Vector2 slideDirection = slide / slideSpeed;
+            if (TryBlockingHit(slideDirection, slideSpeed * deltaTime + config.crowd.collisionSkin, out var slideHit))
+                slide *= Mathf.Clamp01(Mathf.Max(0f, slideHit.distance - config.crowd.collisionSkin) / (slideSpeed * deltaTime));
+            return forward.sqrMagnitude > slide.sqrMagnitude ? forward : slide;
         }
 
         private bool TryBlockingHit(Vector2 direction, float distance, out RaycastHit2D nearest)

@@ -126,3 +126,4 @@ MonoBehaviour:
     lodHysteresis: 2
     maxDecisionsPerFixedStep: 256
     maxPathSearchesPerFixedStep: 8
+    maxPathSearchesPerFrame: 2

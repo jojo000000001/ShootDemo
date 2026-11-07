@@ -267,6 +267,82 @@ namespace ShootDemo.Tests.EditMode
         }
 
         [Test]
+        public void FineSearchFindsNarrowRunwayEntranceFromBothSides()
+        {
+            Wall(new Vector2(14.92f, 9f), new Vector2(0.28f, 28.74f));
+            Wall(new Vector2(17.59f, 9f), new Vector2(0.28f, 28.74f));
+            Wall(new Vector2(15.12f, -5.23f), new Vector2(0.68f, 0.28f));
+            Wall(new Vector2(17.38f, -5.23f), new Vector2(0.68f, 0.28f));
+            Wall(new Vector2(16.25f, 23.23f), new Vector2(2.94f, 0.28f));
+            var nav = new EnemyPathfinder2D(scene, 0.76f, ~0);
+            var entryRoute = new List<Vector2>();
+            Assert.IsTrue(nav.FindPath(new Vector2(13.93f, -3.43f), new Vector2(16.25f, -6.4f),
+                0.2f, entryRoute, 0.01f, false), "The exterior waiting route must not need the fine search.");
+            var target = new Vector2(16.12f, -3.65f);
+            foreach (var start in new[] { new Vector2(13.93f, -3.43f), new Vector2(12.77f, -3.13f),
+                new Vector2(14.81f, -7.46f), new Vector2(20.09f, -4.24f) })
+            {
+                var route = new List<Vector2>();
+                Assert.IsTrue(nav.FindPath(start, target, 1.4f, route), "Must enter via the bottom opening from " + start);
+                Vector2 previous = start;
+                foreach (var point in route)
+                {
+                    Assert.IsTrue(nav.SegmentClear(previous, point), "Route must not cut across a wall.");
+                    previous = point;
+                }
+                Assert.That(Vector2.Distance(previous, target), Is.LessThanOrEqualTo(1.4f));
+            }
+            var deepRoute = new List<Vector2>();
+            Assert.IsTrue(nav.FindPath(new Vector2(11f, 12f), new Vector2(16.12f, 12f), 1.4f, deepRoute),
+                "The only entrance can be farther than 12m from both endpoints.");
+            Assert.IsTrue(deepRoute.Exists(point => point.y < -5.5f));
+
+            body.position = new Vector2(13.93f, -3.43f);
+            enemy.GetComponent<CircleCollider2D>().radius = 0.7f;
+            Invoke(enemy, "Awake");
+            player.GetComponent<Rigidbody2D>().position = new Vector2(16.12f, 0f);
+            var life = enemy.gameObject.AddComponent<EnemyLifecycle>();
+            SetConfig(life);
+            Invoke(life, "Awake");
+            var crowd = enemy.gameObject.AddComponent<EnemyCrowdMovement>();
+            SetConfig(crowd);
+            Invoke(crowd, "Awake");
+            Invoke(crowd, "OnEnable");
+            for (int i = 0; i < 1500 && player.CurrentHealth == player.MaxHealth; i++)
+            {
+                Tick(0.02f);
+                Invoke(crowd, "Tick", 0.02f);
+                scene.GetPhysicsScene2D().Simulate(0.02f);
+            }
+            Assert.Less(player.CurrentHealth, player.MaxHealth, "The enemy must actually enter and reach the player.");
+            Assert.That(body.position.x, Is.InRange(15.5f, 17f));
+        }
+
+        [Test]
+        public void ChaserWithCrowdSteeringEscapesTaperedRockTip()
+        {
+            body.position = new Vector2(0f, -4.1f);
+            player.GetComponent<Rigidbody2D>().position = new Vector2(-4f, 1f);
+            var rock = Create("TaperedRock").AddComponent<PolygonCollider2D>();
+            rock.points = new[] { new Vector2(0f, -3f), new Vector2(1.8f, -1.5f),
+                new Vector2(1.4f, 2.5f), new Vector2(0f, 3f), new Vector2(-1.5f, 2f), new Vector2(-1.8f, -1f) };
+            var life = enemy.gameObject.AddComponent<EnemyLifecycle>();
+            SetConfig(life);
+            Invoke(life, "Awake");
+            var crowd = enemy.gameObject.AddComponent<EnemyCrowdMovement>();
+            SetConfig(crowd);
+            Invoke(crowd, "Awake");
+            Invoke(crowd, "OnEnable");
+            for (int i = 0; i < 1000 && player.CurrentHealth == player.MaxHealth; i++)
+            {
+                Tick(0.02f);
+                Invoke(crowd, "Tick", 0.02f);
+                scene.GetPhysicsScene2D().Simulate(0.02f);
+            }
+            Assert.Less(player.CurrentHealth, player.MaxHealth, "AI and crowd steering must agree on a route past the rock tip.");
+        }
+
+        [Test]
         public void ChaserReachesPlayerOnOtherSideOfObstacle()
         {
             body.position = new Vector2(-4f, 0f);

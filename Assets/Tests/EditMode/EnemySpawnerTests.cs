@@ -98,6 +98,109 @@ namespace ShootDemo.Tests.EditMode
         private bool Find(out Vector2 position) => spawner.TryFindSpawnPosition(prefab, out position);
 
         [Test]
+        public void IncrementalSearchSuspendsAndEventuallyFindsDetour()
+        {
+            var wall = Create("DetourWall", new Vector2(5f, 0f)).AddComponent<BoxCollider2D>();
+            wall.size = new Vector2(1f, 5f);
+            Physics2D.SyncTransforms();
+            var navigation = new EnemyPathfinder2D(scene, 0.75f, ~0);
+            var path = new System.Collections.Generic.List<Vector2>();
+            int steps = 0;
+            using (var search = navigation.FindPathIncremental(Vector2.zero, Vector2.right * 10f, 1f, path).GetEnumerator())
+            {
+                Assert.IsTrue(search.MoveNext(), "A blocked direct route must suspend before expanding the grid.");
+                Assert.IsEmpty(path);
+                while (search.MoveNext()) Assert.Less(++steps, 25000);
+            }
+            Assert.IsNotEmpty(path);
+            Vector2 previous = Vector2.zero;
+            foreach (var point in path)
+            {
+                Assert.IsTrue(navigation.SegmentClear(previous, point));
+                previous = point;
+            }
+            Assert.LessOrEqual(Vector2.Distance(previous, Vector2.right * 10f), 1.5f);
+        }
+
+        [Test]
+        public void NormalSpawnSearchIsBoundedAndResetCancelsPendingWork()
+        {
+            Points(new Vector2(10f, 0f));
+            foreach (var offset in new[] { new Vector2(2f, 0f), new Vector2(-2f, 0f), new Vector2(0f, 2f), new Vector2(0f, -2f) })
+            {
+                var wall = Create("PocketWall", new Vector2(10f, 0f) + offset).AddComponent<BoxCollider2D>();
+                wall.size = offset.x != 0f ? new Vector2(0.3f, 4.5f) : new Vector2(4.5f, 0.3f);
+            }
+            var data = new SerializedObject(spawner);
+            var entries = data.FindProperty("enemies");
+            entries.arraySize = 1;
+            entries.GetArrayElementAtIndex(0).FindPropertyRelative("prefab").objectReferenceValue = prefab;
+            entries.GetArrayElementAtIndex(0).FindPropertyRelative("weight").floatValue = 1f;
+            data.ApplyModifiedPropertiesWithoutUndo();
+            config.spawn.initialDelay = 0f;
+            Invoke(spawner, "Awake");
+            Invoke(spawner, "Tick", 0.02f);
+            Assert.That(spawner.LastPlacementSteps, Is.InRange(1, 64));
+            Assert.AreEqual(0, spawner.TotalSpawned);
+            var field = typeof(EnemySpawner).GetField("pendingPlacement", BindingFlags.Instance | BindingFlags.NonPublic);
+            Assert.IsNotNull(field.GetValue(spawner));
+            spawner.ResetSession();
+            Assert.IsNull(field.GetValue(spawner));
+            Assert.AreEqual(0, spawner.FailedAttempts);
+        }
+
+        [Test]
+        public void SpawnPaddingDoesNotMakePassableEntranceUnreachable()
+        {
+            Points(new Vector2(0f, -12f));
+            var guide = Create("EntranceGuide", Vector2.zero).AddComponent<EnemyNarrowPassage>();
+            var data = new SerializedObject(guide);
+            data.FindProperty("interior").rectValue = new Rect(-1.195f, -5.09f, 2.39f, 28.18f);
+            data.FindProperty("outside").vector2Value = new Vector2(0f, -6.4f);
+            data.FindProperty("entrance").vector2Value = new Vector2(0f, -4.1f);
+            data.ApplyModifiedPropertiesWithoutUndo();
+            Invoke(guide, "OnEnable");
+            try
+            {
+                foreach (float sign in new[] { -1f, 1f })
+                {
+                    var side = Create("SideWall", new Vector2(sign * 1.335f, 9f)).AddComponent<BoxCollider2D>();
+                    side.size = new Vector2(0.28f, 28.74f);
+                    var post = Create("EntrancePost", new Vector2(sign * 1.13f, -5.23f)).AddComponent<BoxCollider2D>();
+                    post.size = new Vector2(0.68f, 0.28f);
+                }
+                Physics2D.SyncTransforms();
+                Assert.IsTrue(Find(out var point), "0.85m spawn padding must not block a doorway passable with the live actor's 0.76m clearance.");
+                Assert.AreEqual(new Vector2(0f, -12f), point);
+            }
+            finally { Invoke(guide, "OnDisable"); }
+        }
+
+        [Test]
+        public void SpawnRejectsVisibleRockBeyondItsSmallCollider()
+        {
+            Points(new Vector2(10f, 0f));
+            var rock = Create("Rock", new Vector2(11.5f, 0f));
+            rock.AddComponent<BoxCollider2D>().size = Vector2.one * 0.2f;
+            var texture = new Texture2D(4, 4);
+            var sprite = Sprite.Create(texture, new Rect(0, 0, 4, 4), Vector2.one * 0.5f, 1f);
+            rock.AddComponent<SpriteRenderer>().sprite = sprite;
+            try { Assert.IsFalse(Find(out _), "The body is clear of the collider but hidden inside the rock art."); }
+            finally { Object.DestroyImmediate(sprite); Object.DestroyImmediate(texture); }
+        }
+
+        [Test]
+        public void SpawnSeesWallMovedBeforePhysicsStep()
+        {
+            Points(new Vector2(10f, 0f));
+            var wall = Create("MovedWall", new Vector2(30f, 0f));
+            wall.AddComponent<BoxCollider2D>().size = Vector2.one * 3f;
+            Physics2D.SyncTransforms();
+            wall.transform.position = new Vector2(10f, 0f);
+            Assert.IsFalse(Find(out _));
+        }
+
+        [Test]
         public void RingCandidatesRemainInsideArenaAndOutsidePlayerSafetyDistance()
         {
             for (int i = 0; i < 30; i++)

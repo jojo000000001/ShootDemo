@@ -82,6 +82,7 @@ namespace ShootDemo.Enemy
                 }
             }
             HealthChanged?.Invoke(CurrentHealth, MaxHealth);
+            CombatAudio.Instance?.EnemyHit(transform.position, killed);
             Damaged?.Invoke(new DamageInfo(amount, hit.Point, hit.Direction, hit.Instigator));
             if (killed) Died?.Invoke();
             return true;

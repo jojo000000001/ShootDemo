@@ -315,6 +315,7 @@ namespace ShootDemo.Config
         [Min(0f)] public float lodHysteresis = 2f;
         [Min(1)] public int maxDecisionsPerFixedStep = 256;
         [Min(1)] public int maxPathSearchesPerFixedStep = 8;
+        [Min(1)] public int maxPathSearchesPerFrame = 2;
 
         internal void Validate()
         {
@@ -324,6 +325,7 @@ namespace ShootDemo.Config
             lodHysteresis = Mathf.Clamp(lodHysteresis, 0f, farDistanceThreshold);
             maxDecisionsPerFixedStep = Mathf.Max(1, maxDecisionsPerFixedStep);
             maxPathSearchesPerFixedStep = Mathf.Max(1, maxPathSearchesPerFixedStep);
+            maxPathSearchesPerFrame = Mathf.Max(1, maxPathSearchesPerFrame);
         }
     }
 }

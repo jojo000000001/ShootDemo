@@ -7,7 +7,7 @@ namespace ShootDemo.Core
 {
     public enum MatchOutcome { None, Victory, Defeat, Ended }
 
-    /// <summary>Finite waves share the existing spawner; completion requires all spawned foes to be gone.</summary>
+    /// <summary>Normal matches end at 100 confirmed kills; stress mode remains unlimited.</summary>
     public sealed class MatchSession : MonoBehaviour
     {
         [SerializeField] private GameStateMachine state;
@@ -19,10 +19,19 @@ namespace ShootDemo.Core
         [SerializeField] private bool finiteWaves = true;
 
         public int DefeatedCount { get; private set; }
+        public const int VictoryKillCount = 100;
         public int WaveIndex { get; private set; }
         public int WaveCount => waveCounts.Length;
         public MatchOutcome Outcome { get; private set; }
+        public bool IsStressMode { get; private set; }
         public event Action Changed;
+
+        public void SetStressMode(bool enabled)
+        {
+            IsStressMode = enabled;
+            if (spawner != null) spawner.SpawnLimit = enabled ? 0 : Mathf.Max(1, waveCounts[0]);
+            Changed?.Invoke();
+        }
 
         private void Start()
         {
@@ -64,12 +73,20 @@ namespace ShootDemo.Core
         private void OnStateChanged(GameState previous, GameState next)
         {
             if (next == GameState.Menu || (previous == GameState.GameOver && next == GameState.Playing)) Begin();
+            if (next == GameState.Playing) EvaluateWave();
         }
 
         private void OnDefeated()
         {
             if (state.CurrentState != GameState.Playing || Outcome != MatchOutcome.None) return;
             DefeatedCount++;
+            if (!IsStressMode && DefeatedCount >= VictoryKillCount && !player.IsDead)
+            {
+                Outcome = MatchOutcome.Victory;
+                Changed?.Invoke();
+                state.TryChangeState(GameState.GameOver);
+                return;
+            }
             Changed?.Invoke();
         }
 
@@ -78,7 +95,7 @@ namespace ShootDemo.Core
 
         private void EvaluateWave()
         {
-            if (!finiteWaves || Outcome != MatchOutcome.None || state.CurrentState != GameState.Playing
+            if (IsStressMode || !finiteWaves || Outcome != MatchOutcome.None || state.CurrentState != GameState.Playing
                 || !spawner.HasFinishedSpawning || registry.AliveCount != 0 || player.IsDead) return;
             if (WaveIndex + 1 < waveCounts.Length)
             {
@@ -87,9 +104,8 @@ namespace ShootDemo.Core
                 Changed?.Invoke();
                 return;
             }
-            Outcome = MatchOutcome.Victory;
-            Changed?.Invoke();
-            state.TryChangeState(GameState.GameOver);
+            // An empty arena is not a kill. Keep spawning until the kill goal is met.
+            spawner.SpawnLimit += Mathf.Max(1, VictoryKillCount - DefeatedCount);
         }
 
         private void OnDestroy()

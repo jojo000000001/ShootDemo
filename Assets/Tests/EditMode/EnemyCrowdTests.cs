@@ -100,6 +100,43 @@ namespace ShootDemo.Tests.EditMode
         }
 
         [Test]
+        public void SavedArenaDoesNotPutEnvironmentSolidsOnNonCollidingEnemyLayer()
+        {
+            var arena = SceneManager.GetSceneByPath("Assets/Scenes/SampleScene.unity");
+            bool opened = !arena.IsValid() || !arena.isLoaded;
+            if (opened) arena = EditorSceneManager.OpenScene("Assets/Scenes/SampleScene.unity", OpenSceneMode.Additive);
+            try
+            {
+                int checkedSolids = 0;
+                int enemyLayer = LayerMask.NameToLayer("Enemy");
+                foreach (var root in arena.GetRootGameObjects())
+                foreach (var solid in root.GetComponentsInChildren<Collider2D>(true))
+                {
+                    if (solid.isTrigger || solid.GetComponentInParent<EnemyHealth>() != null
+                        || (solid.attachedRigidbody != null && solid.attachedRigidbody.bodyType == RigidbodyType2D.Dynamic)) continue;
+                    checkedSolids++;
+                    Assert.IsFalse(Physics2D.GetIgnoreLayerCollision(enemyLayer, solid.gameObject.layer),
+                        solid.name + " must physically block enemies.");
+                }
+                Assert.Greater(checkedSolids, 0);
+            }
+            finally { if (opened) EditorSceneManager.CloseScene(arena, true); }
+        }
+
+        [Test]
+        public void DiagonalContactPreservesSlidingAlongWall()
+        {
+            var actor = Actor(new Vector2(-1.11f, 0f));
+            var wall = Create("Wall", Vector2.zero).AddComponent<BoxCollider2D>();
+            wall.size = new Vector2(1f, 10f);
+            Physics2D.SyncTransforms();
+            Vector2 velocity = (Vector2)Invoke(actor.GetComponent<EnemyCrowdMovement>(),
+                "ConstrainVelocity", new Vector2(3f, 2f), 0.02f);
+            Assert.That(velocity.y, Is.GreaterThan(1.5f), "Contact must not erase tangential movement.");
+            Assert.That(velocity.x, Is.LessThan(0.6f));
+        }
+
+        [Test]
         public void GridTracksMovementDeathDisableAndReuseWithoutStaleEntries()
         {
             var actor = Actor(Vector2.zero);
@@ -116,6 +153,143 @@ namespace ShootDemo.Tests.EditMode
             Assert.AreEqual(1, registry.Grid.Count);
             actor.Despawn();
             Assert.AreEqual(0, registry.Grid.Count);
+        }
+
+        [Test]
+        public void EntranceFollowersSlowForStationaryNeighborAndStillSeparate()
+        {
+            var follower = Actor(Vector2.zero);
+            var leader = Actor(Vector2.up * 0.5f);
+            var melee = follower.gameObject.AddComponent<MeleeEnemy>();
+            SetConfig(melee);
+            Invoke(melee, "Awake");
+            Invoke(melee, "OnEnable");
+            typeof(MeleeEnemy).GetField("<UsingPassageEntrance>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(melee, true);
+            var movement = follower.GetComponent<EnemyCrowdMovement>();
+            Invoke(movement, "Awake");
+            registry.SynchronizeGrid();
+            for (int i = 0; i < 10; i++)
+            {
+                follower.GetComponent<Rigidbody2D>().velocity = Vector2.up * 3.5f;
+                Invoke(movement, "Tick", 0.02f);
+                Assert.LessOrEqual(follower.GetComponent<Rigidbody2D>().velocity.y, 0.001f,
+                    "Entrance followers must not continue advancing inside a stationary neighbor.");
+            }
+            Assert.Greater(movement.LastNeighborCount, 0);
+            Assert.LessOrEqual(movement.LastCandidateChecks, config.crowd.maxCandidates);
+            Invoke(melee, "OnDisable");
+        }
+
+        [Test]
+        public void SideTrafficDoesNotStopAnActorAlignedWithTheEntrance()
+        {
+            var guide = Create("Passage", Vector2.zero).AddComponent<EnemyNarrowPassage>();
+            var data = new SerializedObject(guide);
+            data.FindProperty("interior").rectValue = new Rect(-1.2f, 0f, 2.4f, 20f);
+            data.FindProperty("outside").vector2Value = new Vector2(0f, -1.3f);
+            data.FindProperty("entrance").vector2Value = Vector2.up;
+            data.ApplyModifiedPropertiesWithoutUndo();
+            Invoke(guide, "OnEnable");
+            var player = Create("Player", Vector2.up * 10f).AddComponent<ShootDemo.Player.PlayerHealth>();
+            SetConfig(player);
+            Invoke(player, "Awake");
+            var follower = Actor(new Vector2(0f, -1.3f));
+            Actor(new Vector2(0.8f, -0.9f));
+            var brain = follower.gameObject.AddComponent<MeleeEnemy>();
+            SetConfig(brain);
+            Invoke(brain, "Awake");
+            Invoke(brain, "OnEnable");
+            brain.SetTarget(player);
+            typeof(MeleeEnemy).GetField("<UsingPassageEntrance>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(brain, true);
+            var movement = follower.GetComponent<EnemyCrowdMovement>();
+            Invoke(movement, "Awake");
+            try
+            {
+                registry.SynchronizeGrid();
+                follower.GetComponent<Rigidbody2D>().velocity = Vector2.up * 3.5f;
+                Invoke(movement, "Tick", 0.02f);
+                Assert.Greater(follower.GetComponent<Rigidbody2D>().velocity.y, 1f,
+                    "A side actor still approaching the staging point must not be treated as a stopped leader in the entrance lane.");
+            }
+            finally { Invoke(brain, "OnDisable"); Invoke(guide, "OnDisable"); }
+        }
+
+        [Test]
+        public void CombatantInsidePassageDoesNotReserveTheEntranceForItself()
+        {
+            var guide = Create("Passage", Vector2.zero).AddComponent<EnemyNarrowPassage>();
+            var data = new SerializedObject(guide);
+            data.FindProperty("interior").rectValue = new Rect(-1.2f, 0f, 2.4f, 20f);
+            data.FindProperty("outside").vector2Value = new Vector2(0f, -1.3f);
+            data.FindProperty("entrance").vector2Value = Vector2.up;
+            data.ApplyModifiedPropertiesWithoutUndo();
+            Invoke(guide, "OnEnable");
+            var player = Create("Player", Vector2.up * 4f).AddComponent<ShootDemo.Player.PlayerHealth>();
+            SetConfig(player);
+            Invoke(player, "Awake");
+            var follower = Actor(new Vector2(0f, 0.7f));
+            var holder = Actor(Vector2.up);
+            var ranged = holder.gameObject.AddComponent<RangedEnemy>();
+            SetConfig(ranged);
+            Invoke(ranged, "Awake");
+            Invoke(ranged, "OnEnable");
+            ranged.SetTarget(player);
+            typeof(RangedEnemy).GetField("<State>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(ranged, RangedEnemyState.Firing);
+            Invoke(holder, "Awake");
+            var brain = follower.gameObject.AddComponent<MeleeEnemy>();
+            SetConfig(brain);
+            Invoke(brain, "Awake");
+            Invoke(brain, "OnEnable");
+            brain.SetTarget(player);
+            typeof(MeleeEnemy).GetField("<UsingPassageEntrance>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(brain, true);
+            var movement = follower.GetComponent<EnemyCrowdMovement>();
+            Invoke(movement, "Awake");
+            try
+            {
+                for (int i = 0; i < 20; i++)
+                {
+                    registry.SynchronizeGrid();
+                    holder.GetComponent<Rigidbody2D>().velocity = Vector2.zero;
+                    follower.GetComponent<Rigidbody2D>().velocity = Vector2.up * 3.5f;
+                    Invoke(movement, "Tick", 0.02f);
+                    scene.GetPhysicsScene2D().Simulate(0.02f);
+                }
+                Assert.Greater(follower.Position.y, holder.Position.y + 0.5f,
+                    "A ranged actor already inside must not permanently stop the incoming queue.");
+                Assert.AreEqual(Vector2.up, holder.Position, "The front actor stays in the test instead of being removed.");
+            }
+            finally { Invoke(brain, "OnDisable"); Invoke(ranged, "OnDisable"); Invoke(guide, "OnDisable"); }
+        }
+
+        [Test]
+        public void OverlappingEntranceActorsRecoverSpacingWhileContinuingForward()
+        {
+            var a = Actor(Vector2.zero);
+            var b = Actor(Vector2.up * 0.1f);
+            var brains = new List<MeleeEnemy>();
+            foreach (var actor in new[] { a, b })
+            {
+                var brain = actor.gameObject.AddComponent<MeleeEnemy>();
+                SetConfig(brain);
+                Invoke(brain, "Awake");
+                Invoke(brain, "OnEnable");
+                typeof(MeleeEnemy).GetField("<UsingPassageEntrance>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic)
+                    .SetValue(brain, true);
+                Invoke(actor.GetComponent<EnemyCrowdMovement>(), "Awake");
+                brains.Add(brain);
+            }
+            try
+            {
+                for (int i = 0; i < 100; i++) Step(Vector2.up * 3.5f);
+                Assert.Greater(Vector2.Distance(a.Position, b.Position), 0.9f);
+                Assert.Greater(Mathf.Min(a.Position.y, b.Position.y), 2f,
+                    "Restoring spacing must not stop all entrance traffic.");
+            }
+            finally { foreach (var brain in brains) Invoke(brain, "OnDisable"); }
         }
 
         [Test]

@@ -70,6 +70,7 @@ namespace ShootDemo.Player
             }
 
             HealthChanged?.Invoke(CurrentHealth, MaxHealth);
+            CombatAudio.Instance?.PlayerHit(diedThisHit);
             Damaged?.Invoke(damage);
             if (diedThisHit)
             {

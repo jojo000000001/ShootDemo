@@ -68,11 +68,12 @@ namespace ShootDemo.Player
         {
             if (!CanFire() || pool == null || aim == null)
             {
+                pendingShot = false;
                 return;
             }
 
             float interval = ShotInterval(config.shooting.fireRate);
-            if (!TryFire(Input.GetButton("Fire1"), ref cooldown, interval, Time.deltaTime))
+            if (!TryFire(InputService.ReadFireHeld(), ref cooldown, interval, Time.deltaTime))
             {
                 return;
             }
@@ -106,6 +107,7 @@ namespace ShootDemo.Player
                 config.shooting.bulletDamage,
                 config.shooting.bulletLifetime);
             CombatEffects.Instance?.ShowMuzzle(origin, direction);
+            CombatAudio.Instance?.Shoot();
         }
 
         private Vector2 BarrelDirection()
@@ -185,6 +187,7 @@ namespace ShootDemo.Player
 
         private bool CanFire()
         {
+            if (!InputService.GameplayEnabled) return false;
             if (dash != null && dash.IsDashing)
             {
                 return false;

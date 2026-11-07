@@ -1,4 +1,6 @@
 using UnityEngine;
+using ShootDemo.Core;
+using UnityEngine.EventSystems;
 
 namespace ShootDemo.Player
 {
@@ -11,18 +13,28 @@ namespace ShootDemo.Player
         private const string HorizontalAxis = "Horizontal";
         private const string VerticalAxis = "Vertical";
 
+        public static bool GameplayEnabled => Application.isFocused
+            && (GameStateMachine.Instance == null || GameStateMachine.Instance.CurrentState == GameState.Playing);
+
+        public static bool ReadFireHeld()
+        {
+            return GameplayEnabled && Input.GetButton("Fire1")
+                && (EventSystem.current == null || !EventSystem.current.IsPointerOverGameObject());
+        }
+
         public static bool ReadDashPressed()
         {
-            return Input.GetKeyDown(KeyCode.Space);
+            return GameplayEnabled && Input.GetKeyDown(KeyCode.Space);
         }
 
         public static bool ReadRunHeld()
         {
-            return Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            return GameplayEnabled && (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift));
         }
 
         public static Vector2 ReadMovement()
         {
+            if (!GameplayEnabled) return Vector2.zero;
             Vector2 input = new Vector2(
                 Input.GetAxisRaw(HorizontalAxis),
                 Input.GetAxisRaw(VerticalAxis));

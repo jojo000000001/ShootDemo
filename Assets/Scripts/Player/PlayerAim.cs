@@ -154,6 +154,7 @@ namespace ShootDemo.Player
 
         private bool CanAim()
         {
+            if (!Application.isFocused) return false;
             GameStateMachine stateMachine = GameStateMachine.Instance;
             return stateMachine == null || stateMachine.CurrentState == GameState.Playing;
         }

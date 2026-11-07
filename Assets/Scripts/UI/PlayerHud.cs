@@ -113,7 +113,7 @@ namespace ShootDemo.UI
 
             if (waveText != null)
             {
-                waveText.text = $"波次 {session.WaveIndex + 1} / {session.WaveCount}";
+                waveText.text = session.IsStressMode ? "压力测试" : $"击杀 {session.DefeatedCount} / {MatchSession.VictoryKillCount}";
             }
             if (resultTitle != null)
                 resultTitle.text = session.Outcome == MatchOutcome.Victory ? "胜利" :

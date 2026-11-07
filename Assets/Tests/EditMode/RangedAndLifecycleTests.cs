@@ -260,6 +260,20 @@ namespace ShootDemo.Tests.EditMode
         }
 
         [Test]
+        public void ReenableRebuildsLostNavigationAndBrainReference()
+        {
+            Invoke(enemy, "OnDisable");
+            typeof(RangedEnemy).GetField("navigation", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(enemy, null);
+            typeof(EnemyLifecycle).GetField("<Brain>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(lifecycle, null);
+            Invoke(enemy, "OnEnable");
+            Invoke(lifecycle, "OnEnable");
+            enemy.SetTarget(player);
+            Assert.AreSame(enemy, lifecycle.Brain);
+            Assert.DoesNotThrow(() => Tick(0.02f));
+            Assert.AreEqual(RangedEnemyState.Windup, enemy.State);
+        }
+
+        [Test]
         public void InDistanceBandShowsWarningAndStopsDuringWindup()
         {
             Tick(0.02f);
@@ -269,6 +283,41 @@ namespace ShootDemo.Tests.EditMode
             Tick(config.enemy.rangedWindup * 0.8f);
             Assert.AreEqual(0, enemy.ShotsFired);
             Assert.AreEqual(RangedEnemyState.Windup, enemy.State);
+        }
+
+        [Test]
+        public void EntranceRetreatDoesNotCancelEveryAttackCycle()
+        {
+            var passage = Create("Passage", Vector2.zero).AddComponent<EnemyNarrowPassage>();
+            var data = new SerializedObject(passage);
+            data.FindProperty("interior").rectValue = new Rect(-1.2f, -1f, 2.4f, 20f);
+            data.FindProperty("outside").vector2Value = new Vector2(0f, -2.3f);
+            data.FindProperty("entrance").vector2Value = Vector2.zero;
+            data.ApplyModifiedPropertiesWithoutUndo();
+            Invoke(passage, "OnEnable");
+            body.position = new Vector2(0f, 0.5f);
+            body.rotation = 90f;
+            player.transform.position = Vector2.up * 4f;
+            Wall(new Vector2(-1.35f, 8f), new Vector2(0.3f, 18f));
+            Wall(new Vector2(1.35f, 8f), new Vector2(0.3f, 18f));
+            Physics2D.SyncTransforms();
+            int windups = 0;
+            var previous = enemy.State;
+            try
+            {
+                for (int i = 0; i < 600; i++)
+                {
+                    enemy.SetDecisionSchedule(true, i % 5 == 0);
+                    Tick(0.02f);
+                    scene.GetPhysicsScene2D().Simulate(0.02f);
+                    if (previous != RangedEnemyState.Windup && enemy.State == RangedEnemyState.Windup) windups++;
+                    previous = enemy.State;
+                }
+                Assert.GreaterOrEqual(windups, 2, "A short passage must permit repeated attacks even when the preferred 7m range is unavailable.");
+                Assert.GreaterOrEqual(body.position.y, -0.2f, "Retreat must not send the actor back into entrance guidance.");
+                Assert.IsFalse(enemy.UsingPassageEntrance);
+            }
+            finally { Invoke(passage, "OnDisable"); }
         }
 
         [Test]

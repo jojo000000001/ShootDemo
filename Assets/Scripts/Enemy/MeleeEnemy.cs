@@ -18,6 +18,7 @@ namespace ShootDemo.Enemy
         [SerializeField] private string animationPrefix = "jiangshi";
         [SerializeField] private LayerMask obstacleMask = ~0;
         [SerializeField, Min(0.05f)] private float navigationRadius = 0.75f;
+        public float NavigationClearance => EnemyPathfinder2D.BodyClearance(gameObject, navigationRadius);
         private readonly List<Vector2> path = new List<Vector2>();
         private Rigidbody2D body;
         private EnemyHealth health;
@@ -35,6 +36,11 @@ namespace ShootDemo.Enemy
         private bool scheduleManaged;
         private bool decisionDue;
         private bool directChase;
+        private Vector2 progressPosition;
+        private float progressTime;
+        private bool stalled;
+        public bool FollowingPath => !directChase && path.Count > 0;
+        public bool UsingPassageEntrance { get; private set; }
         public MeleeEnemyState State { get; private set; }
         public PlayerHealth Target => target;
         public bool IsAttacking => State == MeleeEnemyState.Windup || State == MeleeEnemyState.Recovery;
@@ -58,7 +64,7 @@ namespace ShootDemo.Enemy
             health = GetComponent<EnemyHealth>();
             feedback = GetComponent<EnemyHitFeedback>();
             animator = GetComponentInChildren<Animator>();
-            navigation = new EnemyPathfinder2D(gameObject.scene, navigationRadius, obstacleMask);
+            navigation = new EnemyPathfinder2D(gameObject.scene, EnemyPathfinder2D.BodyClearance(gameObject, navigationRadius), obstacleMask);
             if (config == null)
             {
                 Debug.LogError("MeleeEnemy needs a GameConfig reference.", this);
@@ -68,11 +74,18 @@ namespace ShootDemo.Enemy
 
         private void OnEnable()
         {
+            // Plain C# search state is not restored by an editor domain reload.
+            if (navigation == null)
+                navigation = new EnemyPathfinder2D(gameObject.scene, NavigationClearance, obstacleMask);
             if (health != null) health.Damaged += OnDamaged;
             State = MeleeEnemyState.Idle;
             remaining = cooldown = repathRemaining = acquireRemaining = 0f;
             path.Clear();
             directChase = scheduleManaged = decisionDue = false;
+            UsingPassageEntrance = false;
+            progressPosition = body != null ? body.position : (Vector2)transform.position;
+            progressTime = 0f;
+            stalled = false;
         }
 
         public void SetTarget(PlayerHealth value)
@@ -115,6 +128,11 @@ namespace ShootDemo.Enemy
                 return;
             }
 
+            Vector2 destination = target.transform.position;
+            bool guided = EnemyNarrowPassage.Guide(health, destination, out Vector2 passagePoint);
+            UsingPassageEntrance = guided;
+            if (guided) destination = passagePoint;
+
             var settings = config.enemy;
             Vector2 delta = (Vector2)target.transform.position - body.position;
             if (State == MeleeEnemyState.Windup)
@@ -142,7 +160,7 @@ namespace ShootDemo.Enemy
                 if (remaining > 0f) return;
                 State = MeleeEnemyState.Chasing;
             }
-            if (delta.magnitude <= settings.meleeRange
+            if (!guided && delta.magnitude <= settings.meleeRange
                 && navigation.SegmentClear(body.position, target.transform.position, false))
             {
                 Face(delta, deltaTime);
@@ -159,20 +177,29 @@ namespace ShootDemo.Enemy
             }
 
             State = MeleeEnemyState.Chasing;
-            Vector2 destination = target.transform.position;
+            progressTime += deltaTime;
+            if (progressTime >= 0.6f)
+            {
+                stalled = Vector2.Distance(progressPosition, body.position) < 0.2f;
+                progressPosition = body.position;
+                progressTime = 0f;
+                if (stalled && path.Count > 0) repathRemaining = 0f;
+            }
             if (think)
             {
                 directChase = navigation.SegmentClear(body.position, destination);
                 if (directChase) path.Clear();
-                else if (repathRemaining <= 0f && (path.Count == 0 || Vector2.Distance(pathTarget, destination) > 0.75f
+                else if (repathRemaining <= 0f && (stalled || path.Count == 0 || Vector2.Distance(pathTarget, destination) > 0.75f
                     || !navigation.SegmentClear(body.position, path[0])) && ReservePathSearch())
                 {
-                    navigation.FindPath(body.position, destination, settings.meleeRange * 0.85f, path);
+                    bool found = navigation.FindPath(body.position, destination, guided ? 0.2f : settings.meleeRange * 0.85f,
+                        path, 0.01f, !guided);
                     pathTarget = destination;
-                    repathRemaining = settings.meleeRepathInterval;
+                    repathRemaining = found ? settings.meleeRepathInterval : Mathf.Max(2f, settings.meleeRepathInterval);
+                    stalled = false;
                 }
                 // Shortcut checks belong to the decision phase; waypoint execution stays continuous.
-                for (int i = path.Count - 1; i > 0; i--)
+                for (int i = Mathf.Min(path.Count - 1, 8); i > 0; i--)
                     if (navigation.SegmentClear(body.position, path[i])) { path.RemoveRange(0, i); break; }
             }
             if (directChase)
@@ -180,7 +207,7 @@ namespace ShootDemo.Enemy
                 path.Clear();
                 path.Add(destination);
             }
-            while (path.Count > 0 && Vector2.Distance(body.position, path[0]) < 0.15f) path.RemoveAt(0);
+            while (path.Count > 0 && Vector2.Distance(body.position, path[0]) < (guided ? 0.03f : 0.15f)) path.RemoveAt(0);
             if (path.Count == 0) { Stop(); Play("idle"); return; }
             Vector2 move = path[0] - body.position;
             Face(move, deltaTime);

@@ -37,10 +37,17 @@ namespace ShootDemo.Enemy
         private int sequence;
         private int cursor;
         private int allocatedPathSearches;
+        private int pathFrame = -1;
+        private int framePathSearches;
+        private int PathBudget => Application.isPlaying
+            ? Mathf.Min(config.performance.maxPathSearchesPerFixedStep,
+                Mathf.Max(0, config.performance.maxPathSearchesPerFrame - framePathSearches))
+            : config.performance.maxPathSearchesPerFixedStep;
         public int RegisteredCount => entries.Count;
         public int LastDecisionCount { get; private set; }
         public int LastFarCount { get; private set; }
         public int LastPathSearchCount { get; private set; }
+        public int FramePathSearchCount => framePathSearches;
         public long TotalDecisions { get; private set; }
 
         private void Awake() { registry = GetComponent<EnemyRegistry>(); }
@@ -84,6 +91,7 @@ namespace ShootDemo.Enemy
         {
             LastDecisionCount = LastFarCount = LastPathSearchCount = 0;
             allocatedPathSearches = 0;
+            if (pathFrame != Time.frameCount) { pathFrame = Time.frameCount; framePathSearches = 0; }
             if (deltaTime <= 0f || config == null || entries.Count == 0) return;
             var state = GameStateMachine.Instance;
             if (state != null && state.CurrentState != GameState.Playing) return;
@@ -125,7 +133,7 @@ namespace ShootDemo.Enemy
                         LastDecisionCount++;
                         TotalDecisions++;
                         // Previously deferred requests take priority over fresh requests in brain FixedUpdate.
-                        if (entry.WaitingForPath && allocatedPathSearches < settings.maxPathSearchesPerFixedStep)
+                        if (entry.WaitingForPath && allocatedPathSearches < PathBudget)
                         {
                             entry.PathPermit = true;
                             entry.WaitingForPath = false;
@@ -145,8 +153,9 @@ namespace ShootDemo.Enemy
             if (!isActiveAndEnabled || config == null || !config.performance.aiSchedulingEnabled) return true;
             if (!brains.TryGetValue(brain, out var entry)) return true;
             if (entry.PathPermit) entry.PathPermit = false;
-            else if (allocatedPathSearches < config.performance.maxPathSearchesPerFixedStep) allocatedPathSearches++;
+            else if (allocatedPathSearches < PathBudget) allocatedPathSearches++;
             else { entry.WaitingForPath = true; return false; }
+            framePathSearches++;
             entry.WaitingForPath = false;
             LastPathSearchCount++;
             return true;

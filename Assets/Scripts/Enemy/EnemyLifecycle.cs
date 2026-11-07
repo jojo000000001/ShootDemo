@@ -42,6 +42,11 @@ namespace ShootDemo.Enemy
 
         private void OnEnable()
         {
+            // Interface references are not serialized across an editor domain reload.
+            melee = GetComponent<MeleeEnemy>();
+            ranged = GetComponent<RangedEnemy>();
+            Brain = melee != null ? (IEnemyBrain)melee : ranged;
+            Crowd = GetComponent<EnemyCrowdMovement>();
             dying = false;
             remaining = 0f;
             if (melee != null) melee.enabled = useMelee;

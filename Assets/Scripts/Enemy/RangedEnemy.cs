@@ -22,6 +22,7 @@ namespace ShootDemo.Enemy
         [SerializeField] private LineRenderer warning;
         [SerializeField] private LayerMask obstacleMask = ~0;
         [SerializeField, Min(0.05f)] private float navigationRadius = 0.71f;
+        public float NavigationClearance => EnemyPathfinder2D.BodyClearance(gameObject, navigationRadius);
         private readonly List<Vector2> path = new List<Vector2>();
         private Rigidbody2D body;
         private EnemyHealth health;
@@ -48,6 +49,7 @@ namespace ShootDemo.Enemy
         public bool IsAttacking => State == RangedEnemyState.Windup || State == RangedEnemyState.Firing;
         public int ShotsFired { get; private set; }
         public bool IsWarningVisible => warning != null && warning.enabled;
+        public bool UsingPassageEntrance { get; private set; }
         private Vector2 MuzzlePosition => muzzle != null ? (Vector2)muzzle.position : body.position + attackDirection * 0.8f;
 
         public void SetDecisionSchedule(bool managed, bool due)
@@ -70,7 +72,7 @@ namespace ShootDemo.Enemy
             feedback = GetComponent<EnemyHitFeedback>();
             animator = GetComponentInChildren<Animator>();
             attackVisibility = GetComponent<EnemyAttackVisibility>();
-            navigation = new EnemyPathfinder2D(gameObject.scene, navigationRadius, obstacleMask);
+            navigation = new EnemyPathfinder2D(gameObject.scene, EnemyPathfinder2D.BodyClearance(gameObject, navigationRadius), obstacleMask);
             if (config == null)
             {
                 Debug.LogError("RangedEnemy needs a GameConfig reference.", this);
@@ -80,6 +82,8 @@ namespace ShootDemo.Enemy
 
         private void OnEnable()
         {
+            if (navigation == null)
+                navigation = new EnemyPathfinder2D(gameObject.scene, NavigationClearance, obstacleMask);
             if (health != null) health.Damaged += OnDamaged;
             State = RangedEnemyState.Idle;
             remaining = cooldown = repathRemaining = acquireRemaining = 0f;
@@ -87,6 +91,7 @@ namespace ShootDemo.Enemy
             released = false;
             path.Clear();
             directApproach = hasSight = scheduleManaged = decisionDue = false;
+            UsingPassageEntrance = false;
             retreatDirection = Vector2.zero;
             HideWarning();
         }
@@ -136,6 +141,16 @@ namespace ShootDemo.Enemy
             }
 
             if (attackVisibility != null && !attackVisibility.CanAttack) CancelUnreleasedAttack();
+
+            bool guided = EnemyNarrowPassage.Guide(health, target.transform.position, out Vector2 passagePoint);
+            UsingPassageEntrance = guided;
+            if (guided)
+            {
+                CancelUnreleasedAttack();
+                State = RangedEnemyState.Approaching;
+                Approach(passagePoint, deltaTime, think, 0.2f);
+                return;
+            }
 
             var settings = config.enemy;
             Vector2 delta = (Vector2)target.transform.position - body.position;
@@ -234,7 +249,9 @@ namespace ShootDemo.Enemy
                 Vector2 candidate = Quaternion.Euler(0f, 0f, i * 22.5f) * away;
                 float score = Vector2.Dot(candidate, away);
                 Vector2 next = body.position + candidate * (config.enemy.rangedSpeed * deltaTime + 0.25f);
-                if (score < -0.001f || score <= best || !navigation.SegmentClear(body.position, next)
+                if (score < 0.1f || score <= best
+                    || !EnemyNarrowPassage.AllowsRetreat(gameObject.scene, body.position, next, target.transform.position)
+                    || !navigation.SegmentClear(body.position, next)
                     || !navigation.SegmentClear(next, target.transform.position, FiringClearance)) continue;
                 best = score;
                 direction = candidate;
@@ -244,7 +261,7 @@ namespace ShootDemo.Enemy
             return true;
         }
 
-        private void Approach(Vector2 destination, float deltaTime, bool think)
+        private void Approach(Vector2 destination, float deltaTime, bool think, float stopDistance = -1f)
         {
             if (think)
             {
@@ -252,16 +269,16 @@ namespace ShootDemo.Enemy
                 if (directApproach) path.Clear();
                 else if (repathRemaining <= 0f && ReservePathSearch())
                 {
-                    navigation.FindPath(body.position, destination,
-                        Mathf.Max(1f, config.enemy.rangedKeepDistance - config.enemy.rangedDistanceTolerance), path,
-                        FiringClearance);
-                    repathRemaining = config.enemy.meleeRepathInterval;
+                    bool found = navigation.FindPath(body.position, destination,
+                        stopDistance >= 0f ? stopDistance : Mathf.Max(1f, config.enemy.rangedKeepDistance - config.enemy.rangedDistanceTolerance), path,
+                        FiringClearance, stopDistance < 0f);
+                    repathRemaining = found ? config.enemy.meleeRepathInterval : Mathf.Max(2f, config.enemy.meleeRepathInterval);
                 }
-                for (int i = path.Count - 1; i > 0; i--)
+                for (int i = Mathf.Min(path.Count - 1, 8); i > 0; i--)
                     if (navigation.SegmentClear(body.position, path[i])) { path.RemoveRange(0, i); break; }
             }
             if (directApproach) { path.Clear(); path.Add(destination); }
-            while (path.Count > 0 && Vector2.Distance(body.position, path[0]) < 0.15f) path.RemoveAt(0);
+            while (path.Count > 0 && Vector2.Distance(body.position, path[0]) < (stopDistance >= 0f ? 0.03f : 0.15f)) path.RemoveAt(0);
             if (path.Count == 0) { Stop(); Play("idle"); return; }
             Vector2 move = path[0] - body.position;
             Face(move, deltaTime);

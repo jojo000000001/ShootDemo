@@ -90,7 +90,37 @@ namespace ShootDemo.Tests.EditMode
         }
 
         [Test]
-        public void ClearingEachBudgetAdvancesThenWinsExactlyOnce()
+        public void StressModeDoesNotAwardVictoryAndUsesUnlimitedBudget()
+        {
+            session.SetStressMode(true);
+            Spawned(1000);
+            Invoke(session, "OnAliveChanged", 0);
+            Assert.That(spawner.SpawnLimit, Is.Zero);
+            Assert.That(session.Outcome, Is.EqualTo(MatchOutcome.None));
+            Assert.That(state.CurrentState, Is.EqualTo(GameState.Playing));
+        }
+
+        [Test]
+        public void ResumingChecksPendingWaveCompletion()
+        {
+            state.TryChangeState(GameState.Paused);
+            Spawned(1);
+            state.TryChangeState(GameState.Playing);
+            Assert.That(session.WaveIndex, Is.EqualTo(1));
+        }
+
+        [TestCase(100, true)]
+        [TestCase(500, true)]
+        [TestCase(1000, true)]
+        [TestCase(0, false)]
+        [TestCase(999, false)]
+        public void StressTiersAcceptOnlySupportedPopulations(int tier, bool valid)
+        {
+            Assert.That(StressTestController.IsValidTier(tier), Is.EqualTo(valid));
+        }
+
+        [Test]
+        public void ClearingBudgetsWithoutKillsDoesNotWin()
         {
             Spawned(1);
             Invoke(session, "OnAliveChanged", 0);
@@ -100,8 +130,30 @@ namespace ShootDemo.Tests.EditMode
             Spawned(2);
             Invoke(session, "OnAliveChanged", 0);
             Invoke(session, "OnAliveChanged", 0);
+            Assert.That(session.Outcome, Is.EqualTo(MatchOutcome.None));
+            Assert.That(state.CurrentState, Is.EqualTo(GameState.Playing));
+        }
+
+        [Test]
+        public void HundredthKillWinsImmediatelyWithoutWaitingForArenaToEmpty()
+        {
+            for (int i = 0; i < 99; i++) Invoke(session, "OnDefeated");
+            Assert.That(session.Outcome, Is.EqualTo(MatchOutcome.None));
+            Invoke(session, "OnDefeated");
+            Assert.That(session.DefeatedCount, Is.EqualTo(100));
             Assert.That(session.Outcome, Is.EqualTo(MatchOutcome.Victory));
             Assert.That(state.CurrentState, Is.EqualTo(GameState.GameOver));
+            Invoke(session, "OnDefeated");
+            Assert.That(session.DefeatedCount, Is.EqualTo(100));
+        }
+
+        [Test]
+        public void StressModeKeepsPlayingAfterHundredKills()
+        {
+            session.SetStressMode(true);
+            for (int i = 0; i < 101; i++) Invoke(session, "OnDefeated");
+            Assert.That(session.Outcome, Is.EqualTo(MatchOutcome.None));
+            Assert.That(state.CurrentState, Is.EqualTo(GameState.Playing));
         }
 
         [Test]

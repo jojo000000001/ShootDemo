@@ -90,6 +90,22 @@ namespace ShootDemo.Tests.EditMode
         }
 
         [Test]
+        public void Pause_ClearsMovementImmediatelyAndBlocksGameplayInput()
+        {
+            var state = CreateStateMachine();
+            Invoke(movement, "Start");
+            typeof(PlayerMovement).GetField("moveInput", BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(movement, Vector2.up);
+            player.GetComponent<Rigidbody2D>().velocity = Vector2.up * 5f;
+            Assert.That(state.TryChangeState(GameState.Paused), Is.True);
+            Assert.That(movement.MoveInput, Is.EqualTo(Vector2.zero));
+            Assert.That(movement.CurrentVelocity, Is.EqualTo(Vector2.zero));
+            Assert.That(InputService.ReadMovement(), Is.EqualTo(Vector2.zero));
+            Assert.That(InputService.ReadDashPressed(), Is.False);
+            Assert.That(InputService.ReadFireHeld(), Is.False);
+        }
+
+        [Test]
         public void Damage_AppliesOnceAndRaisesHealthEvents()
         {
             int changed = 0;
