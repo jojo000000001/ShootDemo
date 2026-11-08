@@ -134,7 +134,7 @@ namespace ShootDemo.Enemy
                     if (progress < minimum) combined += forward * (minimum - progress);
                     combined = Vector2.ClampMagnitude(combined, intent.magnitude);
                 }
-                // A* already selected a side of the obstacle. Local wall steering must
+                // Shared navigation already selected a side of the obstacle. Local wall steering must
                 // not reverse that route at a corner and send the agent back and forth.
                 if (melee != null && melee.FollowingPath)
                 {

@@ -3,6 +3,7 @@ using ShootDemo.Combat;
 using ShootDemo.Config;
 using ShootDemo.Core;
 using ShootDemo.Player;
+using Unity.Profiling;
 using UnityEngine;
 
 namespace ShootDemo.Enemy
@@ -19,6 +20,7 @@ namespace ShootDemo.Enemy
         [SerializeField] private LayerMask obstacleMask = ~0;
         [SerializeField, Min(0.05f)] private float navigationRadius = 0.75f;
         public float NavigationClearance => EnemyPathfinder2D.BodyClearance(gameObject, navigationRadius);
+        internal int NavigationObstacleMask => obstacleMask.value;
         private readonly List<Vector2> path = new List<Vector2>();
         private Rigidbody2D body;
         private EnemyHealth health;
@@ -28,17 +30,21 @@ namespace ShootDemo.Enemy
         private PlayerHealth target;
         private float remaining;
         private float cooldown;
-        private float repathRemaining;
         private float acquireRemaining;
-        private Vector2 pathTarget;
         private Vector2 attackDirection;
-        private int animationHash;
+        private EnemyAnimationPlayer animationPlayer;
         private bool scheduleManaged;
         private bool decisionDue;
         private bool directChase;
-        private Vector2 progressPosition;
-        private float progressTime;
-        private bool stalled;
+        private bool attackVisibilityValid;
+        private bool attackVisible;
+        private static readonly ProfilerMarker TickMarker = new ProfilerMarker("Enemies.Melee.Tick");
+        private static readonly ProfilerMarker VisibilityMarker = new ProfilerMarker("Enemies.Melee.AttackVisibility");
+        private static readonly ProfilerMarker HitVisibilityMarker = new ProfilerMarker("Enemies.Melee.HitVisibility");
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // Benchmark-only A/B switch; ordinary gameplay always uses the scheduled cache.
+        internal static bool BenchmarkUncachedAttackVisibility;
+#endif
         public bool FollowingPath => !directChase && path.Count > 0;
         public bool UsingPassageEntrance { get; private set; }
         public MeleeEnemyState State { get; private set; }
@@ -51,19 +57,15 @@ namespace ShootDemo.Enemy
             decisionDue = due;
         }
 
-        private bool ReservePathSearch()
-        {
-            var registry = EnemyRegistry.Instance;
-            return registry == null || registry.gameObject.scene != gameObject.scene
-                || registry.Scheduler == null || registry.Scheduler.TryReservePathSearch(this);
-        }
-
         private void Awake()
         {
             body = GetComponent<Rigidbody2D>();
             health = GetComponent<EnemyHealth>();
             feedback = GetComponent<EnemyHitFeedback>();
             animator = GetComponentInChildren<Animator>();
+            animationPlayer = new EnemyAnimationPlayer(animator, animationPrefix);
+            // Enemy root motion is disabled; fully stop evaluating sprite-part clips off camera.
+            if (animator != null) animator.cullingMode = AnimatorCullingMode.CullCompletely;
             navigation = new EnemyPathfinder2D(gameObject.scene, EnemyPathfinder2D.BodyClearance(gameObject, navigationRadius), obstacleMask);
             if (config == null)
             {
@@ -77,15 +79,15 @@ namespace ShootDemo.Enemy
             // Plain C# search state is not restored by an editor domain reload.
             if (navigation == null)
                 navigation = new EnemyPathfinder2D(gameObject.scene, NavigationClearance, obstacleMask);
+            if (animationPlayer == null)
+                animationPlayer = new EnemyAnimationPlayer(animator, animationPrefix);
             if (health != null) health.Damaged += OnDamaged;
             State = MeleeEnemyState.Idle;
-            remaining = cooldown = repathRemaining = acquireRemaining = 0f;
+            remaining = cooldown = acquireRemaining = 0f;
             path.Clear();
             directChase = scheduleManaged = decisionDue = false;
+            attackVisibilityValid = false;
             UsingPassageEntrance = false;
-            progressPosition = body != null ? body.position : (Vector2)transform.position;
-            progressTime = 0f;
-            stalled = false;
         }
 
         public void SetTarget(PlayerHealth value)
@@ -93,7 +95,7 @@ namespace ShootDemo.Enemy
             target = value;
             path.Clear();
             directChase = false;
-            repathRemaining = 0f;
+            attackVisibilityValid = false;
             if (State == MeleeEnemyState.Windup) Interrupt();
         }
 
@@ -101,17 +103,22 @@ namespace ShootDemo.Enemy
 
         internal void Tick(float deltaTime)
         {
+            using (TickMarker.Auto()) TickBrain(deltaTime);
+        }
+
+        private void TickBrain(float deltaTime)
+        {
             if (config == null || deltaTime <= 0f) return;
             if (health.IsDead) { State = MeleeEnemyState.Dead; Stop(); return; }
             var game = GameStateMachine.Instance;
-            if (game != null && game.CurrentState != GameState.Playing) { Stop(); return; }
+            if (game != null && game.CurrentState != GameState.Playing) { attackVisibilityValid = false; Stop(); return; }
             cooldown = Mathf.Max(0f, cooldown - deltaTime);
-            repathRemaining -= deltaTime;
             bool think = !scheduleManaged || decisionDue;
             decisionDue = false;
             if (feedback != null && feedback.IsKnockedBack) return;
             if (target == null || !target.isActiveAndEnabled)
             {
+                attackVisibilityValid = false;
                 acquireRemaining -= deltaTime;
                 if (acquireRemaining <= 0f && think)
                 {
@@ -124,7 +131,7 @@ namespace ShootDemo.Enemy
             {
                 State = MeleeEnemyState.Idle;
                 Stop();
-                Play("idle");
+                animationPlayer?.Play(EnemyAnimation.Idle);
                 return;
             }
 
@@ -144,11 +151,11 @@ namespace ShootDemo.Enemy
                     State = MeleeEnemyState.Recovery;
                     remaining = settings.meleeRecovery;
                     cooldown = settings.meleeInterval;
-                    Play("attack_do", settings.meleeRecovery);
+                    animationPlayer?.Play(EnemyAnimation.AttackDo, settings.meleeRecovery);
                     // A single strike: running away, dodging or taking cover can make it miss.
                     if (delta.magnitude <= settings.meleeRange
                         && Vector2.Angle(attackDirection, delta) <= settings.meleeHalfAngle
-                        && navigation.SegmentClear(body.position, target.transform.position, false))
+                        && HasAttackVisibility(true))
                         target.TryTakeDamage(settings.meleeDamage);
                 }
                 return;
@@ -160,8 +167,18 @@ namespace ShootDemo.Enemy
                 if (remaining > 0f) return;
                 State = MeleeEnemyState.Chasing;
             }
-            if (!guided && delta.magnitude <= settings.meleeRange
-                && navigation.SegmentClear(body.position, target.transform.position, false))
+            bool inAttackRange = !guided && delta.sqrMagnitude <= settings.meleeRange * settings.meleeRange;
+            if (!inAttackRange) attackVisibilityValid = false;
+            bool refreshVisibility = think || !attackVisibilityValid;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            refreshVisibility |= BenchmarkUncachedAttackVisibility;
+#endif
+            if (inAttackRange && refreshVisibility)
+            {
+                attackVisible = HasAttackVisibility(false);
+                attackVisibilityValid = true;
+            }
+            if (inAttackRange && attackVisible)
             {
                 Face(delta, deltaTime);
                 Stop();
@@ -170,49 +187,43 @@ namespace ShootDemo.Enemy
                     State = MeleeEnemyState.Windup;
                     remaining = settings.meleeWindup;
                     attackDirection = transform.right;
-                    Play("attack_pre", Mathf.Max(0.01f, remaining));
+                    animationPlayer?.Play(EnemyAnimation.AttackPre, Mathf.Max(0.01f, remaining));
                 }
-                else { State = MeleeEnemyState.Idle; Play("idle"); }
+                else { State = MeleeEnemyState.Idle; animationPlayer?.Play(EnemyAnimation.Idle); }
                 return;
             }
 
             State = MeleeEnemyState.Chasing;
-            progressTime += deltaTime;
-            if (progressTime >= 0.6f)
-            {
-                stalled = Vector2.Distance(progressPosition, body.position) < 0.2f;
-                progressPosition = body.position;
-                progressTime = 0f;
-                if (stalled && path.Count > 0) repathRemaining = 0f;
-            }
             if (think)
             {
                 directChase = navigation.SegmentClear(body.position, destination);
-                if (directChase) path.Clear();
-                else if (repathRemaining <= 0f && (stalled || path.Count == 0 || Vector2.Distance(pathTarget, destination) > 0.75f
-                    || !navigation.SegmentClear(body.position, path[0])) && ReservePathSearch())
-                {
-                    bool found = navigation.FindPath(body.position, destination, guided ? 0.2f : settings.meleeRange * 0.85f,
-                        path, 0.01f, !guided);
-                    pathTarget = destination;
-                    repathRemaining = found ? settings.meleeRepathInterval : Mathf.Max(2f, settings.meleeRepathInterval);
-                    stalled = false;
-                }
-                // Shortcut checks belong to the decision phase; waypoint execution stays continuous.
-                for (int i = Mathf.Min(path.Count - 1, 8); i > 0; i--)
-                    if (navigation.SegmentClear(body.position, path[i])) { path.RemoveRange(0, i); break; }
             }
+            while (path.Count > 0 && Vector2.Distance(body.position, path[0]) < (guided ? 0.03f : 0.15f)) path.RemoveAt(0);
             if (directChase)
             {
                 path.Clear();
                 path.Add(destination);
             }
-            while (path.Count > 0 && Vector2.Distance(body.position, path[0]) < (guided ? 0.03f : 0.15f)) path.RemoveAt(0);
-            if (path.Count == 0) { Stop(); Play("idle"); return; }
+            else if (think || path.Count == 0)
+            {
+                path.Clear();
+                Vector2 goal = destination;
+                if (guided && EnemyNarrowPassage.TryGetEntranceRoute(gameObject.scene, target.transform.position,
+                    out Vector2 outside, out _)) goal = outside;
+                if (EnemyFlowFieldWorld.ForScene(gameObject.scene).TryGetWaypoint(body.position, goal,
+                    navigation.Clearance, obstacleMask, guided, navigation, out Vector2 next)) path.Add(next);
+            }
+            if (path.Count == 0) { Stop(); animationPlayer?.Play(EnemyAnimation.Idle); return; }
             Vector2 move = path[0] - body.position;
             Face(move, deltaTime);
             body.velocity = move.normalized * Mathf.Min(settings.meleeSpeed, move.magnitude / deltaTime);
-            Play("run");
+            animationPlayer?.Play(EnemyAnimation.Run);
+        }
+
+        private bool HasAttackVisibility(bool committingHit)
+        {
+            using ((committingHit ? HitVisibilityMarker : VisibilityMarker).Auto())
+                return navigation.SegmentClear(body.position, target.transform.position, false);
         }
 
         private void Face(Vector2 direction, float deltaTime)
@@ -244,22 +255,8 @@ namespace ShootDemo.Enemy
             cooldown = Mathf.Max(cooldown, config.enemy.meleeRecovery);
             path.Clear();
             directChase = false;
-            repathRemaining = 0f;
-            Play("idle");
-        }
-
-        private void Play(string suffix, float duration = 0f)
-        {
-            if (animator == null) return;
-            int hash = Animator.StringToHash("Base Layer." + animationPrefix + "_" + suffix);
-            if (hash == animationHash) return;
-            if (!animator.HasState(0, hash)) return;
-            animationHash = hash;
-            animator.speed = 1f;
-            animator.Play(hash, 0, 0f);
-            animator.Update(0f);
-            float length = animator.GetCurrentAnimatorStateInfo(0).length;
-            if (duration > 0f) animator.speed = length / duration;
+            attackVisibilityValid = false;
+            animationPlayer?.Play(EnemyAnimation.Idle);
         }
 
         private void OnDisable()
@@ -267,7 +264,7 @@ namespace ShootDemo.Enemy
             if (health != null) health.Damaged -= OnDamaged;
             Stop();
             if (animator != null) animator.speed = 1f;
-            animationHash = 0;
+            animationPlayer?.Reset();
             path.Clear();
         }
     }

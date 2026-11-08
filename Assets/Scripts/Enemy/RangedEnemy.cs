@@ -23,6 +23,7 @@ namespace ShootDemo.Enemy
         [SerializeField] private LayerMask obstacleMask = ~0;
         [SerializeField, Min(0.05f)] private float navigationRadius = 0.71f;
         public float NavigationClearance => EnemyPathfinder2D.BodyClearance(gameObject, navigationRadius);
+        internal int NavigationObstacleMask => obstacleMask.value;
         private readonly List<Vector2> path = new List<Vector2>();
         private Rigidbody2D body;
         private EnemyHealth health;
@@ -33,12 +34,11 @@ namespace ShootDemo.Enemy
         private PlayerHealth target;
         private float remaining;
         private float cooldown;
-        private float repathRemaining;
         private float acquireRemaining;
         private bool released;
         private Vector2 attackDirection;
         private float warningLength;
-        private int animationHash;
+        private EnemyAnimationPlayer animationPlayer;
         private bool scheduleManaged;
         private bool decisionDue;
         private bool directApproach;
@@ -58,19 +58,15 @@ namespace ShootDemo.Enemy
             decisionDue = due;
         }
 
-        private bool ReservePathSearch()
-        {
-            var registry = EnemyRegistry.Instance;
-            return registry == null || registry.gameObject.scene != gameObject.scene
-                || registry.Scheduler == null || registry.Scheduler.TryReservePathSearch(this);
-        }
-
         private void Awake()
         {
             body = GetComponent<Rigidbody2D>();
             health = GetComponent<EnemyHealth>();
             feedback = GetComponent<EnemyHitFeedback>();
             animator = GetComponentInChildren<Animator>();
+            animationPlayer = new EnemyAnimationPlayer(animator, "outuzhe");
+            // Enemy root motion is disabled; fully stop evaluating sprite-part clips off camera.
+            if (animator != null) animator.cullingMode = AnimatorCullingMode.CullCompletely;
             attackVisibility = GetComponent<EnemyAttackVisibility>();
             navigation = new EnemyPathfinder2D(gameObject.scene, EnemyPathfinder2D.BodyClearance(gameObject, navigationRadius), obstacleMask);
             if (config == null)
@@ -84,9 +80,11 @@ namespace ShootDemo.Enemy
         {
             if (navigation == null)
                 navigation = new EnemyPathfinder2D(gameObject.scene, NavigationClearance, obstacleMask);
+            if (animationPlayer == null)
+                animationPlayer = new EnemyAnimationPlayer(animator, "outuzhe");
             if (health != null) health.Damaged += OnDamaged;
             State = RangedEnemyState.Idle;
-            remaining = cooldown = repathRemaining = acquireRemaining = 0f;
+            remaining = cooldown = acquireRemaining = 0f;
             ShotsFired = 0;
             released = false;
             path.Clear();
@@ -104,7 +102,6 @@ namespace ShootDemo.Enemy
             directApproach = hasSight = false;
             retreatDirection = Vector2.zero;
             State = RangedEnemyState.Idle;
-            repathRemaining = 0f;
             HideWarning();
         }
 
@@ -117,7 +114,6 @@ namespace ShootDemo.Enemy
             var game = GameStateMachine.Instance;
             if (game != null && game.CurrentState != GameState.Playing) { Stop(); return; }
             cooldown = Mathf.Max(0f, cooldown - deltaTime);
-            repathRemaining -= deltaTime;
             bool think = !scheduleManaged || decisionDue;
             decisionDue = false;
             if (feedback != null && feedback.IsKnockedBack) return;
@@ -136,7 +132,7 @@ namespace ShootDemo.Enemy
                 State = RangedEnemyState.Idle;
                 Stop();
                 HideWarning();
-                Play("idle");
+                animationPlayer?.Play(EnemyAnimation.Idle);
                 return;
             }
 
@@ -164,7 +160,7 @@ namespace ShootDemo.Enemy
                     State = RangedEnemyState.Firing;
                     remaining = settings.rangedRecovery;
                     released = false;
-                    Play("attack_do", settings.rangedRecovery);
+                    animationPlayer?.Play(EnemyAnimation.AttackDo, settings.rangedRecovery);
                 }
                 return;
             }
@@ -203,7 +199,7 @@ namespace ShootDemo.Enemy
                 // Reapply raw intent each step; crowd steering must never feed back into the AI direction.
                 body.velocity = retreatDirection * settings.rangedSpeed;
                 Face(delta, deltaTime);
-                Play("walk");
+                animationPlayer?.Play(EnemyAnimation.Walk);
                 return;
             }
             Stop();
@@ -217,10 +213,10 @@ namespace ShootDemo.Enemy
                 remaining = settings.rangedWindup;
                 attackDirection = delta.sqrMagnitude > 0.0001f ? delta.normalized : (Vector2)transform.right;
                 warningLength = Mathf.Min(settings.rangedMaxDistance, distance);
-                Play("attack_pre", Mathf.Max(0.01f, remaining));
+                animationPlayer?.Play(EnemyAnimation.AttackPre, Mathf.Max(0.01f, remaining));
                 DrawWarning();
             }
-            else { State = RangedEnemyState.Idle; Play("idle"); }
+            else { State = RangedEnemyState.Idle; animationPlayer?.Play(EnemyAnimation.Idle); }
         }
 
         private void DecideMovement(Vector2 delta, float distance, float deltaTime)
@@ -266,24 +262,24 @@ namespace ShootDemo.Enemy
             if (think)
             {
                 directApproach = navigation.SegmentClear(body.position, destination);
-                if (directApproach) path.Clear();
-                else if (repathRemaining <= 0f && ReservePathSearch())
-                {
-                    bool found = navigation.FindPath(body.position, destination,
-                        stopDistance >= 0f ? stopDistance : Mathf.Max(1f, config.enemy.rangedKeepDistance - config.enemy.rangedDistanceTolerance), path,
-                        FiringClearance, stopDistance < 0f);
-                    repathRemaining = found ? config.enemy.meleeRepathInterval : Mathf.Max(2f, config.enemy.meleeRepathInterval);
-                }
-                for (int i = Mathf.Min(path.Count - 1, 8); i > 0; i--)
-                    if (navigation.SegmentClear(body.position, path[i])) { path.RemoveRange(0, i); break; }
             }
-            if (directApproach) { path.Clear(); path.Add(destination); }
             while (path.Count > 0 && Vector2.Distance(body.position, path[0]) < (stopDistance >= 0f ? 0.03f : 0.15f)) path.RemoveAt(0);
-            if (path.Count == 0) { Stop(); Play("idle"); return; }
+            if (directApproach) { path.Clear(); path.Add(destination); }
+            else if (think || path.Count == 0)
+            {
+                path.Clear();
+                Vector2 goal = destination;
+                bool guided = stopDistance >= 0f;
+                if (guided && EnemyNarrowPassage.TryGetEntranceRoute(gameObject.scene, target.transform.position,
+                    out Vector2 outside, out _)) goal = outside;
+                if (EnemyFlowFieldWorld.ForScene(gameObject.scene).TryGetWaypoint(body.position, goal,
+                    navigation.Clearance, obstacleMask, guided, navigation, out Vector2 next)) path.Add(next);
+            }
+            if (path.Count == 0) { Stop(); animationPlayer?.Play(EnemyAnimation.Idle); return; }
             Vector2 move = path[0] - body.position;
             Face(move, deltaTime);
             body.velocity = move.normalized * Mathf.Min(config.enemy.rangedSpeed, move.magnitude / deltaTime);
-            Play("run");
+            animationPlayer?.Play(EnemyAnimation.Run);
         }
 
         private void Face(Vector2 direction, float deltaTime)
@@ -331,21 +327,8 @@ namespace ShootDemo.Enemy
             path.Clear();
             directApproach = hasSight = false;
             retreatDirection = Vector2.zero;
-            repathRemaining = 0f;
             HideWarning();
-            Play("idle");
-        }
-
-        private void Play(string suffix, float duration = 0f)
-        {
-            if (animator == null) return;
-            int hash = Animator.StringToHash("Base Layer.outuzhe_" + suffix);
-            if (hash == animationHash || !animator.HasState(0, hash)) return;
-            animationHash = hash;
-            animator.speed = 1f;
-            animator.Play(hash, 0, 0f);
-            animator.Update(0f);
-            if (duration > 0f) animator.speed = animator.GetCurrentAnimatorStateInfo(0).length / duration;
+            animationPlayer?.Play(EnemyAnimation.Idle);
         }
 
         private void OnDisable()
@@ -354,7 +337,7 @@ namespace ShootDemo.Enemy
             Stop();
             HideWarning();
             if (animator != null) animator.speed = 1f;
-            animationHash = 0;
+            animationPlayer?.Reset();
             path.Clear();
             target = null;
         }

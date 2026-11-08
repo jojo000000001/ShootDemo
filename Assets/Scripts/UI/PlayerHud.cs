@@ -74,7 +74,7 @@ namespace ShootDemo.UI
 
             if (dashText != null)
             {
-                dashText.text = remaining > 0f ? $"闪避 {remaining:F1}s" : "闪避 就绪 [空格]";
+                dashText.text = remaining > 0f ? $"闪避 {remaining:F1}s" : "闪避 就绪 [空格/右键]";
             }
         }
 

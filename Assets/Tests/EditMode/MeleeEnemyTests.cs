@@ -105,6 +105,30 @@ namespace ShootDemo.Tests.EditMode
         }
 
         [Test]
+        public void NavigationIgnoresDenseEnemyLayerButStillStopsAtEnvironment()
+        {
+            int layer = LayerMask.NameToLayer("Enemy");
+            for (int i = 0; i < 128; i++)
+            {
+                var actor = Create("Crowd");
+                actor.layer = layer;
+                actor.transform.position = new Vector2(i * 0.03f, 0f);
+                actor.AddComponent<Rigidbody2D>().gravityScale = 0f;
+                actor.AddComponent<CircleCollider2D>().radius = 0.5f;
+            }
+            Physics2D.SyncTransforms();
+            var navigation = new EnemyPathfinder2D(scene, 0.6f, ~0);
+            Assert.IsTrue(navigation.SegmentClear(Vector2.left, Vector2.right * 6f));
+            Wall(new Vector2(5f, 0f), new Vector2(0.5f, 5f));
+            Physics2D.SyncTransforms();
+            Assert.IsFalse(navigation.SegmentClear(Vector2.left, Vector2.right * 6f));
+            var wall = scene.GetRootGameObjects()[scene.rootCount - 1];
+            wall.AddComponent<Rigidbody2D>().bodyType = RigidbodyType2D.Kinematic;
+            Physics2D.SyncTransforms();
+            Assert.IsFalse(navigation.SegmentClear(Vector2.left, Vector2.right * 6f));
+        }
+
+        [Test]
         public void WindupStopsMovementAndDoesNotDealEarlyDamage()
         {
             Tick(0.02f);
@@ -153,6 +177,48 @@ namespace ShootDemo.Tests.EditMode
             Wall(new Vector2(0.7f, 0f), new Vector2(0.1f, 3f));
             Tick(config.enemy.meleeWindup + 0.01f);
             Assert.AreEqual(player.MaxHealth, player.CurrentHealth);
+        }
+
+        [Test]
+        public void ScheduledVisibilityWaitsForDecisionAfterCoverIsRemoved()
+        {
+            Wall(new Vector2(0.7f, 0f), new Vector2(0.1f, 3f));
+            enemy.SetDecisionSchedule(true, true);
+            Tick(0.02f);
+            Assert.AreEqual(MeleeEnemyState.Chasing, enemy.State);
+            foreach (var collider in scene.GetRootGameObjects())
+                if (collider.name == "Wall") Object.DestroyImmediate(collider);
+            enemy.SetDecisionSchedule(true, false);
+            Tick(0.02f);
+            Assert.AreEqual(MeleeEnemyState.Chasing, enemy.State, "Cover visibility stays cached between decisions.");
+            enemy.SetDecisionSchedule(true, true);
+            Tick(0.02f);
+            Assert.AreEqual(MeleeEnemyState.Windup, enemy.State, "The next decision must react to removed cover.");
+        }
+
+        [Test]
+        public void ScheduledStrikeRechecksCoverEvenWithoutAnotherDecision()
+        {
+            enemy.SetDecisionSchedule(true, true);
+            Tick(0.02f);
+            Assert.AreEqual(MeleeEnemyState.Windup, enemy.State);
+            Wall(new Vector2(0.7f, 0f), new Vector2(0.1f, 3f));
+            enemy.SetDecisionSchedule(true, false);
+            Tick(config.enemy.meleeWindup + 0.01f);
+            Assert.AreEqual(player.MaxHealth, player.CurrentHealth, "Cached visibility cannot authorize a hit through cover.");
+            Assert.AreEqual(MeleeEnemyState.Recovery, enemy.State);
+        }
+
+        [Test]
+        public void EnteringAttackRangeChecksVisibilityWithoutWaitingForDecision()
+        {
+            player.transform.position = Vector2.right * 5f;
+            enemy.SetDecisionSchedule(true, true);
+            Tick(0.02f);
+            player.transform.position = Vector2.right * 1.4f;
+            enemy.SetDecisionSchedule(true, false);
+            Tick(0.02f);
+            Assert.AreEqual(MeleeEnemyState.Windup, enemy.State);
         }
 
         [Test]

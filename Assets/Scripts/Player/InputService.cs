@@ -24,7 +24,12 @@ namespace ShootDemo.Player
 
         public static bool ReadDashPressed()
         {
-            return GameplayEnabled && Input.GetKeyDown(KeyCode.Space);
+            if (!GameplayEnabled) return false;
+
+            bool spacePressed = Input.GetKeyDown(KeyCode.Space);
+            bool rightMousePressed = Input.GetMouseButtonDown(1)
+                && (EventSystem.current == null || !EventSystem.current.IsPointerOverGameObject());
+            return spacePressed || rightMousePressed;
         }
 
         public static bool ReadRunHeld()

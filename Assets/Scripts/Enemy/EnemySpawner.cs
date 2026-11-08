@@ -99,6 +99,22 @@ namespace ShootDemo.Enemy
         private void Start()
         {
             if (registry == null) registry = GetComponent<EnemyRegistry>();
+            // Bake before enemies spawn; prefabs in the same size class share the graph.
+            if (enemies != null && config != null)
+            {
+                var world = EnemyFlowFieldWorld.ForScene(gameObject.scene);
+                world.RefreshInterval = config.performance.flowFieldRefreshInterval;
+                world.BuildMillisecondsPerFrame = config.performance.flowFieldBuildMilliseconds;
+                Physics2D.SyncTransforms();
+                foreach (var entry in enemies)
+                {
+                    if (entry?.prefab == null) continue;
+                    var melee = entry.prefab.GetComponent<MeleeEnemy>();
+                    var ranged = entry.prefab.GetComponent<RangedEnemy>();
+                    if (melee != null) world.Prepare(melee.NavigationClearance, melee.NavigationObstacleMask, arena);
+                    else if (ranged != null) world.Prepare(ranged.NavigationClearance, ranged.NavigationObstacleMask, arena);
+                }
+            }
             state = GameStateMachine.Instance;
             if (state != null) state.StateChanged += OnStateChanged;
         }

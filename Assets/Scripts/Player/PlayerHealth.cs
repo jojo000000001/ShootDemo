@@ -12,15 +12,18 @@ namespace ShootDemo.Player
         [SerializeField] private GameConfig config;
         private PlayerDash dash;
         private float hurtProtectionRemaining;
+        private bool stressTestInvulnerable;
 
         public float CurrentHealth { get; private set; }
         public float MaxHealth { get; private set; }
         public bool IsDead { get; private set; }
-        public bool IsInvulnerable => !IsDead && (hurtProtectionRemaining > 0f
+        public bool IsInvulnerable => !IsDead && (stressTestInvulnerable || hurtProtectionRemaining > 0f
             || (dash != null && dash.IsInvulnerable));
         public event Action<float, float> HealthChanged;
         public event Action<float> Damaged;
         public event Action Died;
+
+        public void SetStressTestInvulnerable(bool enabled) { stressTestInvulnerable = enabled; }
 
         private void Awake()
         {

@@ -9,11 +9,13 @@ namespace ShootDemo.Enemy
     {
         private const float CellSize = 0.75f;
         private const int MaxVisited = 4096;
+        public const int DefaultMaxVisited = MaxVisited;
         private readonly PhysicsScene2D physics;
         private readonly float radius;
+        internal float Clearance => radius;
         private readonly ContactFilter2D filter;
         private readonly List<RaycastHit2D> hits = new List<RaycastHit2D>(16);
-        private readonly List<Collider2D> overlaps = new List<Collider2D>(16);
+        private readonly List<Collider2D> overlaps = new List<Collider2D>(8);
         private readonly Dictionary<Vector2Int, Node> nodes = new Dictionary<Vector2Int, Node>();
         private readonly List<Node> open = new List<Node>();
         private readonly List<Node> nodePool = new List<Node>();
@@ -103,11 +105,15 @@ namespace ShootDemo.Enemy
             physics = scene.GetPhysicsScene2D();
             radius = Mathf.Max(0.05f, clearance);
             filter = new ContactFilter2D { useTriggers = false };
-            filter.SetLayerMask(obstacleMask);
+            // Enemy is the actor-only layer (also excluded by crowd wall sweeps).
+            // Reject it in the broad phase, rather than fetching a dense crowd of dynamic
+            // colliders on every sight/route cast and discarding all of them in IsObstacle.
+            int enemyLayer = LayerMask.NameToLayer("Enemy");
+            filter.SetLayerMask(enemyLayer >= 0 ? obstacleMask.value & ~(1 << enemyLayer) : obstacleMask.value);
         }
 
         // Actors are dynamic bodies. Static/kinematic solids form the navigable environment.
-        private static bool IsObstacle(Collider2D collider)
+        internal static bool IsObstacle(Collider2D collider)
         {
             return collider != null && !collider.isTrigger
                 && (collider.attachedRigidbody == null || collider.attachedRigidbody.bodyType != RigidbodyType2D.Dynamic);
@@ -116,6 +122,13 @@ namespace ShootDemo.Enemy
         public bool SegmentClear(Vector2 from, Vector2 to, bool useClearance = true)
         {
             return CastClear(from, to, useClearance ? radius : 0.01f, useClearance);
+        }
+
+        internal bool PointClear(Vector2 point)
+        {
+            int count = physics.OverlapCircle(point, radius, filter, overlaps);
+            for (int i = 0; i < count; i++) if (IsObstacle(overlaps[i])) return false;
+            return true;
         }
 
         public bool SegmentClear(Vector2 from, Vector2 to, float clearance)
@@ -141,18 +154,11 @@ namespace ShootDemo.Enemy
             return true;
         }
 
-        private bool PositionClear(Vector2 point)
-        {
-            int count = physics.OverlapCircle(point, radius, filter, overlaps);
-            for (int i = 0; i < count; i++) if (IsObstacle(overlaps[i])) return false;
-            return true;
-        }
-
         /// <summary>Returns a path to an unobstructed approach point within stoppingDistance of the target.</summary>
         public bool FindPath(Vector2 start, Vector2 target, float stoppingDistance, List<Vector2> path,
-            float targetClearance = 0.01f, bool allowFineSearch = true)
+            float targetClearance = 0.01f, bool allowFineSearch = true, int maxVisitedNodes = MaxVisited)
         {
-            using (var search = FindPathIncremental(start, target, stoppingDistance, path, targetClearance, allowFineSearch).GetEnumerator())
+            using (var search = FindPathIncremental(start, target, stoppingDistance, path, targetClearance, allowFineSearch, maxVisitedNodes).GetEnumerator())
                 while (search.MoveNext()) { }
             return path.Count > 0;
         }
@@ -160,17 +166,18 @@ namespace ShootDemo.Enemy
         // One yield per expanded node lets callers impose both time and node budgets.
         // Each pathfinder owns its search buffers: do not interleave searches on one instance.
         public IEnumerable<int> FindPathIncremental(Vector2 start, Vector2 target, float stoppingDistance,
-            List<Vector2> path, float targetClearance = 0.01f, bool allowFineSearch = true)
+            List<Vector2> path, float targetClearance = 0.01f, bool allowFineSearch = true, int maxVisitedNodes = MaxVisited)
         {
             path.Clear();
             if (SegmentClear(start, target)) { path.Add(target); yield break; }
-            foreach (int node in FindGridPath(start, target, stoppingDistance, path, targetClearance, CellSize)) yield return node;
+            maxVisitedNodes = Mathf.Max(1, maxVisitedNodes);
+            foreach (int node in FindGridPath(start, target, stoppingDistance, path, targetClearance, CellSize, maxVisitedNodes)) yield return node;
             if (path.Count > 0 || !allowFineSearch) yield break;
-            foreach (int node in FindGridPath(start, target, stoppingDistance, path, targetClearance, 0.25f)) yield return node;
+            foreach (int node in FindGridPath(start, target, stoppingDistance, path, targetClearance, 0.25f, maxVisitedNodes)) yield return node;
         }
 
         private IEnumerable<int> FindGridPath(Vector2 start, Vector2 target, float stoppingDistance,
-            List<Vector2> path, float targetClearance, float step)
+            List<Vector2> path, float targetClearance, float step, int maxVisitedNodes)
         {
             path.Clear();
             nodes.Clear();
@@ -201,7 +208,7 @@ namespace ShootDemo.Enemy
                 maxY = Mathf.Max(maxY, Mathf.CeilToInt((bounds.max.y + padding) / step));
             }
             int visited = 0;
-            int budget = step < CellSize ? MaxVisited * 4 : MaxVisited;
+            int budget = step < CellSize ? maxVisitedNodes * 4 : maxVisitedNodes;
             while (open.Count > 0 && visited++ < budget)
             {
                 yield return visited;
@@ -229,7 +236,9 @@ namespace ShootDemo.Enemy
                     Vector2 destination = (Vector2)cell * step;
                     float cost = current.Cost + Vector2.Distance(point, destination);
                     if (next != null && cost >= next.Cost) continue;
-                    if (!PositionClear(destination) || !SegmentClear(point, destination)) continue;
+                    // The swept clearance cast checks the whole segment, including its endpoint.
+                    // Repeating an overlap query at every A* neighbor doubles physics-query work.
+                    if (!SegmentClear(point, destination)) continue;
                     bool created = next == null;
                     if (created)
                     {

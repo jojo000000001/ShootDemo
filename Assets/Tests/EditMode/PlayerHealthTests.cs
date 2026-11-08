@@ -127,6 +127,24 @@ namespace ShootDemo.Tests.EditMode
         }
 
         [Test]
+        public void StressTestInvulnerabilityBlocksDamageUntilDisabled()
+        {
+            int damageEvents = 0;
+            health.Damaged += _ => damageEvents++;
+
+            health.SetStressTestInvulnerable(true);
+            Assert.That(health.IsInvulnerable, Is.True);
+            Assert.That(health.TryTakeDamage(50f), Is.False);
+            Assert.That(health.CurrentHealth, Is.EqualTo(health.MaxHealth));
+            Assert.That(damageEvents, Is.Zero);
+
+            health.SetStressTestInvulnerable(false);
+            Assert.That(health.IsInvulnerable, Is.False);
+            Assert.That(health.TryTakeDamage(10f), Is.True);
+            Assert.That(health.CurrentHealth, Is.EqualTo(health.MaxHealth - 10f));
+        }
+
+        [Test]
         public void Damage_IsAcceptedAfterHurtProtectionExpires()
         {
             health.TryTakeDamage(10f);

@@ -99,6 +99,8 @@ namespace ShootDemo.Enemy
             var settings = config.performance;
             bool managed = settings.aiSchedulingEnabled;
             int count = entries.Count;
+            float baseInterval = count >= settings.highPopulationThreshold
+                ? settings.highPopulationAiTickInterval : settings.aiTickInterval;
             using (Marker.Auto())
             {
                 for (int offset = 0; offset < count; offset++)
@@ -114,7 +116,7 @@ namespace ShootDemo.Enemy
                     float boundary = entry.Initialized
                         ? Mathf.Max(0f, threshold + (entry.Far ? -settings.lodHysteresis : settings.lodHysteresis)) : threshold;
                     entry.Far = distanceSquared > boundary * boundary;
-                    float interval = Mathf.Max(deltaTime, settings.aiTickInterval * (entry.Far ? settings.farTickMultiplier : 1f));
+                    float interval = Mathf.Max(deltaTime, baseInterval * (entry.Far ? settings.farTickMultiplier : 1f));
                     if (!entry.Initialized)
                     {
                         int phases = Mathf.Max(1, Mathf.CeilToInt(interval / deltaTime));

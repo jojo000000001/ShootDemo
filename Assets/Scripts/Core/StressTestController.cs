@@ -42,6 +42,7 @@ namespace ShootDemo.Core
             if (!IsValidTier(count) || state == null || session == null || registry == null || spawner == null || player == null
                 || (state.CurrentState != GameState.Menu && state.CurrentState != GameState.Playing && state.CurrentState != GameState.Paused)) return;
             bool entering = !IsActive;
+            player.SetStressTestInvulnerable(true);
             session.SetStressMode(true);
             spawner.StressControlled = true;
             TargetCount = count;
@@ -116,6 +117,7 @@ namespace ShootDemo.Core
         {
             if (next != GameState.Menu) return;
             TargetCount = 0;
+            if (player != null) player.SetStressTestInvulnerable(false);
             if (session != null) session.SetStressMode(false);
             if (spawner != null) spawner.StressControlled = false;
             Changed?.Invoke();
@@ -125,6 +127,7 @@ namespace ShootDemo.Core
         {
             if (registry != null) registry.AliveCountChanged -= OnCount;
             if (state != null) state.StateChanged -= OnState;
+            if (player != null) player.SetStressTestInvulnerable(false);
         }
     }
 }

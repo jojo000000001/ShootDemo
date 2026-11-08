@@ -316,6 +316,11 @@ namespace ShootDemo.Config
         [Min(1)] public int maxDecisionsPerFixedStep = 256;
         [Min(1)] public int maxPathSearchesPerFixedStep = 8;
         [Min(1)] public int maxPathSearchesPerFrame = 2;
+        [Min(1)] public int highPopulationThreshold = 100;
+        [Min(0.01f)] public float highPopulationAiTickInterval = 0.5f;
+        [Min(16)] public int highPopulationPathNodeBudget = 32;
+        [Range(0.2f, 0.5f)] public float flowFieldRefreshInterval = 0.3f;
+        [Min(0.1f)] public float flowFieldBuildMilliseconds = 1f;
 
         internal void Validate()
         {
@@ -326,6 +331,11 @@ namespace ShootDemo.Config
             maxDecisionsPerFixedStep = Mathf.Max(1, maxDecisionsPerFixedStep);
             maxPathSearchesPerFixedStep = Mathf.Max(1, maxPathSearchesPerFixedStep);
             maxPathSearchesPerFrame = Mathf.Max(1, maxPathSearchesPerFrame);
+            highPopulationThreshold = Mathf.Max(1, highPopulationThreshold);
+            highPopulationAiTickInterval = Mathf.Max(0.01f, highPopulationAiTickInterval);
+            highPopulationPathNodeBudget = Mathf.Max(16, highPopulationPathNodeBudget);
+            flowFieldRefreshInterval = Mathf.Clamp(flowFieldRefreshInterval, 0.2f, 0.5f);
+            flowFieldBuildMilliseconds = Mathf.Max(0.1f, flowFieldBuildMilliseconds);
         }
     }
 }

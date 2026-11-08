@@ -127,3 +127,8 @@ MonoBehaviour:
     maxDecisionsPerFixedStep: 256
     maxPathSearchesPerFixedStep: 8
     maxPathSearchesPerFrame: 2
+    highPopulationThreshold: 100
+    highPopulationAiTickInterval: 0.5
+    highPopulationPathNodeBudget: 32
+    flowFieldRefreshInterval: 0.3
+    flowFieldBuildMilliseconds: 1

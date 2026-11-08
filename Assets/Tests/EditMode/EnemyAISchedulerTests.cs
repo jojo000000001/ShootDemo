@@ -118,7 +118,7 @@ namespace ShootDemo.Tests.EditMode
         private static bool Due(EnemyLifecycle actor) => (bool)DueField.GetValue(actor.Brain);
 
         [Test]
-        public void ThousandNearEnemiesAreStaggeredAcrossFivePhysicsSteps()
+        public void ThousandNearEnemiesUseTheHighPopulationDecisionRate()
         {
             for (int i = 0; i < 1000; i++) Actor(10f);
             long before = scheduler.TotalDecisions;
@@ -126,9 +126,9 @@ namespace ShootDemo.Tests.EditMode
             {
                 StepSchedule();
                 Assert.LessOrEqual(scheduler.LastDecisionCount, 256);
-                Assert.GreaterOrEqual(scheduler.LastDecisionCount, 150);
+                Assert.That(scheduler.LastDecisionCount, Is.InRange(30, 50));
             }
-            Assert.That(scheduler.TotalDecisions - before, Is.InRange(9800, 10200));
+            Assert.That(scheduler.TotalDecisions - before, Is.InRange(1900, 2100));
             Assert.AreEqual(1000, scheduler.RegisteredCount);
         }
 
